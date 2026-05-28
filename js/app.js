@@ -2,6 +2,69 @@
 
 let map, directionsRenderer, originAutocomplete, destAutocomplete;
 
+// ── API Usage Tracker ──────────────────────────────────────────
+// Google Maps Platform free credit: $200/month
+// Cost per route search (approximate):
+//   Directions API:  $0.005
+//   Routes API:      $0.005
+//   Geocoding x2:    $0.010
+//   Total per search: ~$0.020
+const BUDGET = {
+  monthly: 200,
+  costPerSearch: 0.020,
+  warnAt: 0.80, // warn at 80% usage
+};
+
+const UsageTracker = {
+  _key: 'capymap_usage',
+
+  _getStore() {
+    const now = new Date();
+    const monthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    let store = JSON.parse(localStorage.getItem(this._key) || '{}');
+    if (store.month !== monthKey) {
+      store = { month: monthKey, searches: 0, estimatedCost: 0 };
+    }
+    return store;
+  },
+
+  _save(store) {
+    localStorage.setItem(this._key, JSON.stringify(store));
+  },
+
+  record() {
+    const store = this._getStore();
+    store.searches += 1;
+    store.estimatedCost = +(store.searches * BUDGET.costPerSearch).toFixed(3);
+    this._save(store);
+    this.render();
+  },
+
+  render() {
+    const store = this._getStore();
+    const used = store.estimatedCost;
+    const remaining = +(BUDGET.monthly - used).toFixed(2);
+    const pct = Math.min((used / BUDGET.monthly) * 100, 100);
+
+    const el = document.getElementById('usage-bar');
+    if (!el) return;
+
+    const fill = el.querySelector('.usage-fill');
+    const label = el.querySelector('.usage-label');
+
+    fill.style.width = `${pct}%`;
+    fill.style.background = pct >= 80 ? '#ea4335' : pct >= 50 ? '#fbbc04' : '#34a853';
+
+    label.textContent = `今月: $${used.toFixed(2)} 使用 / 残り $${remaining.toFixed(2)} (検索 ${store.searches}回)`;
+    el.style.display = 'block';
+
+    if (pct >= 80) {
+      showError(`⚠️ 月次予算の ${Math.round(pct)}% を使用しました（残り $${remaining}）`);
+    }
+  },
+};
+// ──────────────────────────────────────────────────────────────
+
 // Vehicle type to Routes API emission type mapping
 const VEHICLE_EMISSION_MAP = {
   '普通車': 'GASOLINE',
@@ -74,6 +137,8 @@ function initMap() {
       if (e.key === 'Enter') searchRoute();
     });
   });
+
+  UsageTracker.render();
 }
 
 function useCurrentLocation() {
@@ -136,6 +201,7 @@ async function searchRoute() {
     }
 
     showResults(directionsResult, tollInfo, avoidTolls);
+    UsageTracker.record();
   } catch (err) {
     showError(err.message || '経路の取得に失敗しました');
   } finally {

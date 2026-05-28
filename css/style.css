@@ -356,6 +356,31 @@ header .subtitle {
   flex-shrink: 0;
 }
 
+/* Usage Bar */
+#usage-bar {
+  background: #f1f3f4;
+  padding: 5px 16px 6px;
+  flex-shrink: 0;
+  border-top: 1px solid var(--border);
+}
+
+.usage-fill {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--toll-color);
+  transition: width 0.4s ease, background 0.4s;
+  min-width: 2px;
+}
+
+.usage-label {
+  font-size: 0.68rem;
+  color: var(--text-secondary);
+  margin-top: 3px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* Map */
 #map {
   flex: 1;
