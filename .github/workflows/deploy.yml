@@ -24,7 +24,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Inject API Key
+      - name: Inject Google Maps API Key (optional)
+        if: ${{ secrets.MAPS_API_KEY != '' }}
         run: |
           sed -i "s|REPLACE_WITH_YOUR_API_KEY|${{ secrets.MAPS_API_KEY }}|g" index.html
 
