@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+  <title>CapyMap - 高速道路料金計算</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <div id="app">
+    <header>
+      <h1>CapyMap</h1>
+      <p class="subtitle">高速道路料金計算</p>
+    </header>
+
+    <div id="search-panel">
+      <div class="input-group">
+        <label for="origin">出発地</label>
+        <div class="input-wrapper">
+          <span class="input-icon">🔵</span>
+          <input type="text" id="origin" placeholder="出発地を入力" autocomplete="off">
+          <button class="locate-btn" id="locate-btn" title="現在地を使用">📍</button>
+        </div>
+      </div>
+
+      <div class="input-group">
+        <label for="destination">目的地</label>
+        <div class="input-wrapper">
+          <span class="input-icon">🔴</span>
+          <input type="text" id="destination" placeholder="目的地を入力" autocomplete="off">
+        </div>
+      </div>
+
+      <div class="options-row">
+        <div class="option-group">
+          <label for="vehicle-type">車種</label>
+          <select id="vehicle-type">
+            <option value="普通車">普通車</option>
+            <option value="軽自動車">軽自動車</option>
+            <option value="中型車">中型車</option>
+            <option value="大型車">大型車</option>
+            <option value="特大車">特大車</option>
+          </select>
+        </div>
+
+        <div class="option-group">
+          <label for="has-etc">ETC</label>
+          <div class="toggle-wrapper">
+            <input type="checkbox" id="has-etc" checked>
+            <label for="has-etc" class="toggle-label">
+              <span class="toggle-slider"></span>
+            </label>
+            <span class="toggle-text" id="etc-text">あり</span>
+          </div>
+        </div>
+
+        <div class="option-group">
+          <label for="avoid-tolls">有料道路</label>
+          <div class="toggle-wrapper">
+            <input type="checkbox" id="avoid-tolls">
+            <label for="avoid-tolls" class="toggle-label">
+              <span class="toggle-slider"></span>
+            </label>
+            <span class="toggle-text" id="avoid-text">使用</span>
+          </div>
+        </div>
+      </div>
+
+      <button id="search-btn" class="search-btn">
+        <span id="btn-text">経路を検索</span>
+        <span id="btn-loading" class="loading-spinner" style="display:none">⏳</span>
+      </button>
+    </div>
+
+    <div id="result-panel" style="display:none">
+      <div class="result-cards">
+        <div class="result-card">
+          <span class="card-icon">🛣️</span>
+          <span class="card-label">距離</span>
+          <span class="card-value" id="result-distance">—</span>
+        </div>
+        <div class="result-card">
+          <span class="card-icon">⏱️</span>
+          <span class="card-label">所要時間</span>
+          <span class="card-value" id="result-duration">—</span>
+        </div>
+        <div class="result-card highlight" id="toll-card">
+          <span class="card-icon">💴</span>
+          <span class="card-label">通行料金</span>
+          <span class="card-value" id="result-toll">—</span>
+        </div>
+      </div>
+      <div id="toll-detail" class="toll-detail" style="display:none">
+        <h3>料金詳細</h3>
+        <div id="toll-detail-content"></div>
+      </div>
+    </div>
+
+    <div id="error-msg" class="error-msg" style="display:none"></div>
+
+    <div id="map"></div>
+  </div>
+
+  <!-- REPLACE_WITH_YOUR_API_KEY は Google Maps API Key に置き換えてください -->
+  <!-- docs/SETUP.md の手順を参照 -->
+  <script>
+    window.MAPS_API_KEY = 'REPLACE_WITH_YOUR_API_KEY';
+  </script>
+  <script>
+    (function() {
+      const key = window.MAPS_API_KEY;
+      if (!key || key === 'REPLACE_WITH_YOUR_API_KEY') {
+        document.getElementById('error-msg').style.display = 'block';
+        document.getElementById('error-msg').textContent =
+          'API Key が設定されていません。docs/SETUP.md の手順を参照してください。';
+        return;
+      }
+      const script = document.createElement('script');
+      script.src = `https://maps.googleapis.com/maps/api/js?key=${key}&libraries=places&language=ja&region=JP&callback=initMap`;
+      script.async = true;
+      script.defer = true;
+      document.head.appendChild(script);
+    })();
+  </script>
+  <script src="js/app.js"></script>
+</body>
+</html>

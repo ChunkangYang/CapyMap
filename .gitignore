@@ -1,0 +1,11 @@
+# Editor
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local config (do not commit real API keys)
+config.local.js
