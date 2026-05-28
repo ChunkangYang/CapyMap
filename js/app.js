@@ -120,6 +120,8 @@ let lastOriginCoord = null;
 let lastDestCoord = null;
 let lastVehicleType = '普通車';
 let lastHasEtc = true;
+let lastOriginText = '';
+let lastDestText = '';
 
 window.initMap = function() {
   map = new google.maps.Map(document.getElementById('map'), {
@@ -221,6 +223,8 @@ async function searchRoutes() {
     const [oCoord, dCoord] = await Promise.all([geocode(originVal), geocode(destVal)]);
     lastOriginCoord = oCoord;
     lastDestCoord = dCoord;
+    lastOriginText = originVal;
+    lastDestText = destVal;
     lastVehicleType = vehicleType;
     lastHasEtc = hasEtc;
     const routes = await fetchRoutes(oCoord, dCoord, vehicleType, hasEtc, avoidTolls);
@@ -300,9 +304,8 @@ function extractHighwayICs(route) {
 }
 
 function buildVerifyUrl() {
-  // Yahoo! Map supports coordinate-based deep linking for car route search
-  if (lastOriginCoord && lastDestCoord) {
-    return `https://map.yahoo.co.jp/route/car?from=${lastOriginCoord.lat()},${lastOriginCoord.lng()}&to=${lastDestCoord.lat()},${lastDestCoord.lng()}`;
+  if (lastOriginText && lastDestText) {
+    return `https://map.yahoo.co.jp/route/car?from=${encodeURIComponent(lastOriginText)}&to=${encodeURIComponent(lastDestText)}`;
   }
   return null;
 }
