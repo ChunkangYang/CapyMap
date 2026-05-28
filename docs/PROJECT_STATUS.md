@@ -20,6 +20,7 @@ URL: https://chunkangyang.github.io/CapyMap/
   - **Google Geocoding API** で住所→座標変換
   - Google Sign-In（GIS）で認証（許可メール: cky1983@gmail.com, meilin709@gmail.com）
   - 複数ルート比較表示（最安・最速バッジ付き、¥/km コスパ表示）
+  - Yahoo!マップ確認リンク（住所テキスト → 即ルート表示）
   - 車種別・ETC/非ETC対応（Google Routes API の tollPasses）
   - 有料道路回避オプション
   - 現在地ボタン（Geolocation API）
@@ -49,6 +50,7 @@ URL: https://chunkangyang.github.io/CapyMap/
 | 車種選択（普通車/軽/中型/大型/特大） | ✅ |
 | 複数ルート比較表示 | ✅ |
 | 最安・最速バッジ + ¥/km 表示 | ✅ |
+| Yahoo!マップ確認リンク | ✅ |
 | 有料道路回避オプション | ✅ |
 | 現在地ボタン | ✅ |
 | Google 認証（許可メール制限） | ✅ |
