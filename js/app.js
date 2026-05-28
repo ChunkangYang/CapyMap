@@ -1,56 +1,43 @@
 /* global google */
 'use strict';
 
-// ── Auth config ───────────────────────────────────────────────
+// ── Auth ──────────────────────────────────────────────────────
 const ALLOWED_EMAILS = ['cky1983@gmail.com', 'meilin709@gmail.com'];
 const SESSION_KEY    = 'capymap_session';
-const SESSION_TTL    = 7 * 24 * 60 * 60 * 1000; // 7 days
+const SESSION_TTL    = 7 * 24 * 60 * 60 * 1000;
 
 const VEHICLE_EMISSION = {
-  '普通車':   'GASOLINE',
-  '軽自動車': 'GASOLINE',
-  '中型車':   'GASOLINE',
-  '大型車':   'DIESEL',
-  '特大車':   'DIESEL',
+  '普通車':'GASOLINE','軽自動車':'GASOLINE','中型車':'GASOLINE',
+  '大型車':'DIESEL','特大車':'DIESEL',
 };
 
-// ── Session helpers ───────────────────────────────────────────
 function getSession() {
   try {
     const s = JSON.parse(localStorage.getItem(SESSION_KEY));
     if (!s || Date.now() > s.exp || !ALLOWED_EMAILS.includes(s.email)) {
-      localStorage.removeItem(SESSION_KEY);
-      return null;
+      localStorage.removeItem(SESSION_KEY); return null;
     }
     return s;
   } catch { return null; }
 }
 
 function saveSession(email, name) {
-  localStorage.setItem(SESSION_KEY, JSON.stringify({
-    email, name, exp: Date.now() + SESSION_TTL,
-  }));
+  localStorage.setItem(SESSION_KEY, JSON.stringify({ email, name, exp: Date.now() + SESSION_TTL }));
 }
 
 function parseJwt(token) {
-  const b64 = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
+  const b64 = token.split('.')[1].replace(/-/g,'+').replace(/_/g,'/');
   return JSON.parse(decodeURIComponent(
-    atob(b64).split('').map(c => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2)).join('')
+    atob(b64).split('').map(c=>'%'+('00'+c.charCodeAt(0).toString(16)).slice(-2)).join('')
   ));
 }
-// ─────────────────────────────────────────────────────────────
 
-// ── Google Sign-In callback (global, called by GIS) ──────────
 window.handleCredentialResponse = function(response) {
-  const payload = parseJwt(response.credential);
-  const { email, name } = payload;
-
+  const { email, name } = parseJwt(response.credential);
   if (!ALLOWED_EMAILS.includes(email)) {
-    document.getElementById('login-error').textContent =
-      `${email} はアクセス権がありません。`;
+    document.getElementById('login-error').textContent = `${email} はアクセス権がありません。`;
     return;
   }
-
   saveSession(email, name);
   launchApp(email, name);
 };
@@ -61,61 +48,44 @@ function signOut() {
   location.reload();
 }
 window.signOut = signOut;
-// ─────────────────────────────────────────────────────────────
 
-// ── Boot ─────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
   const session = getSession();
-  if (session) {
-    launchApp(session.email, session.name);
-  } else {
-    showLoginScreen();
-  }
+  if (session) launchApp(session.email, session.name);
+  else showLoginScreen();
 });
 
 function showLoginScreen() {
   document.getElementById('login-overlay').style.display = 'flex';
   document.getElementById('app').style.display = 'none';
-
   const clientId = window.OAUTH_CLIENT_ID;
   if (!clientId || clientId.length < 10) {
     document.getElementById('login-error').textContent = 'OAuth Client ID が設定されていません。';
     return;
   }
-
   waitForGIS(() => {
-    google.accounts.id.initialize({
-      client_id: clientId,
-      callback: window.handleCredentialResponse,
-      auto_select: false,
-    });
-    google.accounts.id.renderButton(
-      document.getElementById('google-signin-btn'),
-      { theme: 'outline', size: 'large', text: 'signin_with', locale: 'ja', width: 240 }
-    );
+    google.accounts.id.initialize({ client_id: clientId, callback: window.handleCredentialResponse, auto_select: false });
+    google.accounts.id.renderButton(document.getElementById('google-signin-btn'),
+      { theme:'outline', size:'large', text:'signin_with', locale:'ja', width:240 });
   });
 }
 
-function waitForGIS(cb, tries = 0) {
+function waitForGIS(cb, tries=0) {
   if (window.google?.accounts?.id) { cb(); return; }
   if (tries > 50) { document.getElementById('login-error').textContent = 'サインインの読み込みに失敗しました。'; return; }
-  setTimeout(() => waitForGIS(cb, tries + 1), 100);
+  setTimeout(() => waitForGIS(cb, tries+1), 100);
 }
 
 function launchApp(email, name) {
   document.getElementById('login-overlay').style.display = 'none';
   document.getElementById('app').style.display = 'flex';
   document.getElementById('user-name').textContent = name || email;
-
   loadMapsApi();
 }
 
 function loadMapsApi() {
   const key = window.MAPS_API_KEY;
-  if (!key || key.length < 20) {
-    showError('Maps API Key が設定されていません。');
-    return;
-  }
+  if (!key || key.length < 20) { showError('Maps API Key が設定されていません。'); return; }
   const s = document.createElement('script');
   s.src = `https://maps.googleapis.com/maps/api/js?key=${key}&libraries=places&language=ja&region=JP&callback=initMap`;
   s.async = true;
@@ -123,70 +93,44 @@ function loadMapsApi() {
 }
 // ─────────────────────────────────────────────────────────────
 
-// ── Monthly budget tracker ────────────────────────────────────
-const BUDGET = { monthly: 200, costPerSearch: 0.020 };
-
+// ── Budget tracker ────────────────────────────────────────────
+const BUDGET = { monthly: 200, costPerSearch: 0.025 };
 const UsageTracker = {
   _key: 'capymap_usage',
-  _monthKey() {
-    const d = new Date();
-    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
-  },
-  _get() {
-    let s = JSON.parse(localStorage.getItem(this._key) || '{}');
-    if (s.month !== this._monthKey()) s = { month: this._monthKey(), searches: 0, cost: 0 };
-    return s;
-  },
-  record() {
-    const s = this._get();
-    s.searches += 1;
-    s.cost = +(s.searches * BUDGET.costPerSearch).toFixed(3);
-    localStorage.setItem(this._key, JSON.stringify(s));
-    this.render();
-  },
+  _mk() { const d=new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`; },
+  _get() { let s=JSON.parse(localStorage.getItem(this._key)||'{}'); if(s.month!==this._mk()) s={month:this._mk(),searches:0,cost:0}; return s; },
+  record() { const s=this._get(); s.searches++; s.cost=+(s.searches*BUDGET.costPerSearch).toFixed(3); localStorage.setItem(this._key,JSON.stringify(s)); this.render(); },
   render() {
-    const s = this._get();
-    const used = s.cost || 0;
-    const remaining = +(BUDGET.monthly - used).toFixed(2);
-    const pct = Math.min((used / BUDGET.monthly) * 100, 100);
-    const el = document.getElementById('usage-bar');
+    const s=this._get(); const used=s.cost||0; const rem=+(BUDGET.monthly-used).toFixed(2);
+    const pct=Math.min((used/BUDGET.monthly)*100,100); const el=document.getElementById('usage-bar');
     if (!el) return;
-    el.querySelector('.usage-fill').style.width = `${pct}%`;
-    el.querySelector('.usage-fill').style.background =
-      pct >= 80 ? '#ea4335' : pct >= 50 ? '#fbbc04' : '#34a853';
-    el.querySelector('.usage-label').textContent =
-      `今月: $${used.toFixed(2)} / 残り $${remaining.toFixed(2)}（検索 ${s.searches}回）`;
-    el.style.display = 'block';
-    if (pct >= 80) showError(`⚠️ 月次予算の ${Math.round(pct)}% を使用済み`);
+    el.querySelector('.usage-fill').style.width=`${pct}%`;
+    el.querySelector('.usage-fill').style.background=pct>=80?'#ea4335':pct>=50?'#fbbc04':'#34a853';
+    el.querySelector('.usage-label').textContent=`今月: $${used.toFixed(2)} / 残り $${rem.toFixed(2)}（検索 ${s.searches}回）`;
+    el.style.display='block';
   },
 };
 // ─────────────────────────────────────────────────────────────
 
-// ── Google Maps init ─────────────────────────────────────────
-let map, directionsRenderer, originAutocomplete, destAutocomplete;
+// ── Map ───────────────────────────────────────────────────────
+let map, originAutocomplete, destAutocomplete;
+let routePolylines = [];
+let selectedRouteIndex = 0;
 
 window.initMap = function() {
   map = new google.maps.Map(document.getElementById('map'), {
-    center: { lat: 36.2, lng: 138.0 },
-    zoom: 6,
-    mapTypeControl: false,
-    streetViewControl: false,
-    fullscreenControl: false,
-    gestureHandling: 'greedy',
+    center: { lat:36.2, lng:138.0 }, zoom:6,
+    mapTypeControl:false, streetViewControl:false, fullscreenControl:false,
+    gestureHandling:'greedy',
   });
 
-  directionsRenderer = new google.maps.DirectionsRenderer({
-    map,
-    polylineOptions: { strokeColor: '#1a73e8', strokeWeight: 5 },
-  });
-
-  const opts = { componentRestrictions: { country: 'jp' }, fields: ['name', 'geometry'] };
+  const opts = { componentRestrictions:{country:'jp'}, fields:['name','geometry'] };
   originAutocomplete = new google.maps.places.Autocomplete(document.getElementById('origin'), opts);
   destAutocomplete   = new google.maps.places.Autocomplete(document.getElementById('destination'), opts);
   originAutocomplete.bindTo('bounds', map);
   destAutocomplete.bindTo('bounds', map);
 
-  document.getElementById('search-btn').addEventListener('click', searchRoute);
+  document.getElementById('search-btn').addEventListener('click', searchRoutes);
   document.getElementById('locate-btn').addEventListener('click', useCurrentLocation);
   document.getElementById('has-etc').addEventListener('change', function() {
     document.getElementById('etc-text').textContent = this.checked ? 'あり' : 'なし';
@@ -195,17 +139,68 @@ window.initMap = function() {
     document.getElementById('avoid-text').textContent = this.checked ? '回避' : '使用';
   });
   ['origin','destination'].forEach(id => {
-    document.getElementById(id).addEventListener('keydown', e => {
-      if (e.key === 'Enter') searchRoute();
-    });
+    document.getElementById(id).addEventListener('keydown', e => { if(e.key==='Enter') searchRoutes(); });
   });
-
   UsageTracker.render();
 };
+
+// Decode Google encoded polyline → [{lat,lng}]
+function decodePolyline(encoded) {
+  const pts = []; let i=0, lat=0, lng=0;
+  while (i < encoded.length) {
+    let b, shift=0, result=0;
+    do { b=encoded.charCodeAt(i++)-63; result|=(b&0x1f)<<shift; shift+=5; } while (b>=0x20);
+    lat += (result&1)?~(result>>1):(result>>1);
+    shift=result=0;
+    do { b=encoded.charCodeAt(i++)-63; result|=(b&0x1f)<<shift; shift+=5; } while (b>=0x20);
+    lng += (result&1)?~(result>>1):(result>>1);
+    pts.push({ lat:lat/1e5, lng:lng/1e5 });
+  }
+  return pts;
+}
+
+function drawRoutes(routes, selectedIdx) {
+  routePolylines.forEach(p => p.setMap(null));
+  routePolylines = [];
+
+  const bounds = new google.maps.LatLngBounds();
+
+  routes.forEach((route, i) => {
+    const path = decodePolyline(route.polyline.encodedPolyline);
+    path.forEach(p => bounds.extend(p));
+
+    const isSelected = i === selectedIdx;
+    const polyline = new google.maps.Polyline({
+      path,
+      strokeColor: isSelected ? ROUTE_COLORS[i] : '#b0bec5',
+      strokeWeight: isSelected ? 5 : 3,
+      strokeOpacity: isSelected ? 0.9 : 0.5,
+      zIndex: isSelected ? 10 : i,
+      map,
+    });
+
+    polyline.addListener('click', () => selectRoute(i));
+    routePolylines.push(polyline);
+  });
+
+  map.fitBounds(bounds, { padding:40 });
+}
+
+const ROUTE_COLORS = ['#1a73e8','#e53935','#2e7d32','#f57c00'];
+
+function selectRoute(idx) {
+  selectedRouteIndex = idx;
+  const routes = window._lastRoutes;
+  if (!routes) return;
+  drawRoutes(routes, idx);
+  document.querySelectorAll('.route-card').forEach((card, i) => {
+    card.classList.toggle('selected', i === idx);
+  });
+}
 // ─────────────────────────────────────────────────────────────
 
-// ── Route search ─────────────────────────────────────────────
-async function searchRoute() {
+// ── Search ────────────────────────────────────────────────────
+async function searchRoutes() {
   const originVal = document.getElementById('origin').value.trim();
   const destVal   = document.getElementById('destination').value.trim();
   if (!originVal || !destVal) { showError('出発地と目的地を入力してください'); return; }
@@ -219,113 +214,140 @@ async function searchRoute() {
   const vehicleType = document.getElementById('vehicle-type').value;
 
   try {
-    const [directionsResult, tollInfo] = await Promise.all([
-      getDirections(originVal, destVal, avoidTolls),
-      avoidTolls ? Promise.resolve(null) : getTollInfo(originVal, destVal, vehicleType, hasEtc),
-    ]);
-    showResults(directionsResult, tollInfo, avoidTolls);
+    const [oCoord, dCoord] = await Promise.all([geocode(originVal), geocode(destVal)]);
+    const routes = await fetchRoutes(oCoord, dCoord, vehicleType, hasEtc, avoidTolls);
+
+    if (!routes.length) throw new Error('経路が見つかりません');
+
+    window._lastRoutes = routes;
+    selectedRouteIndex = 0;
+    drawRoutes(routes, 0);
+    renderRouteCards(routes, avoidTolls, hasEtc);
     UsageTracker.record();
-  } catch (err) {
+  } catch(err) {
     showError(err.message || '経路の取得に失敗しました');
   } finally {
     setLoading(false);
   }
 }
 
-function getDirections(origin, destination, avoidTolls) {
-  return new Promise((resolve, reject) => {
-    new google.maps.DirectionsService().route(
-      {
-        origin, destination,
-        travelMode: google.maps.TravelMode.DRIVING,
-        region: 'jp', avoidTolls,
-        drivingOptions: { departureTime: new Date(), trafficModel: google.maps.TrafficModel.BEST_GUESS },
-      },
-      (result, status) => {
-        if (status === 'OK') { directionsRenderer.setDirections(result); resolve(result); }
-        else {
-          const msgs = { NOT_FOUND:'場所が見つかりません', ZERO_RESULTS:'経路が見つかりません', REQUEST_DENIED:'APIが承認されていません' };
-          reject(new Error(msgs[status] || `エラー: ${status}`));
-        }
-      }
-    );
-  });
-}
-
-async function getTollInfo(origin, destination, vehicleType, hasEtc) {
-  const [oLatLng, dLatLng] = await Promise.all([geocode(origin), geocode(destination)]);
+async function fetchRoutes(oCoord, dCoord, vehicleType, hasEtc, avoidTolls) {
   const body = {
-    origin:      { location: { latLng: { latitude: oLatLng.lat(), longitude: oLatLng.lng() } } },
-    destination: { location: { latLng: { latitude: dLatLng.lat(), longitude: dLatLng.lng() } } },
+    origin:      { location: { latLng: { latitude:oCoord.lat(), longitude:oCoord.lng() } } },
+    destination: { location: { latLng: { latitude:dCoord.lat(), longitude:dCoord.lng() } } },
     travelMode: 'DRIVE',
-    routingPreference: 'TRAFFIC_AWARE',
-    extraComputations: ['TOLLS'],
+    routingPreference: avoidTolls ? 'TRAFFIC_AWARE' : 'TRAFFIC_AWARE',
+    computeAlternativeRoutes: !avoidTolls, // alternatives only when tolls are used
+    extraComputations: avoidTolls ? [] : ['TOLLS'],
     routeModifiers: {
-      vehicleInfo: { emissionType: VEHICLE_EMISSION[vehicleType] || 'GASOLINE' },
-      ...(hasEtc ? { tollPasses: ['JP_ETC','JP_ETC2'] } : {}),
+      avoidTolls,
+      vehicleInfo: { emissionType: VEHICLE_EMISSION[vehicleType]||'GASOLINE' },
+      ...(hasEtc && !avoidTolls ? { tollPasses:['JP_ETC','JP_ETC2'] } : {}),
     },
   };
+
   const resp = await fetch(
     `https://routes.googleapis.com/directions/v2:computeRoutes?key=${window.MAPS_API_KEY}`,
     {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Goog-FieldMask': 'routes.travelAdvisory.tollInfo' },
+      method:'POST',
+      headers:{
+        'Content-Type':'application/json',
+        'X-Goog-FieldMask':'routes.duration,routes.distanceMeters,routes.polyline.encodedPolyline,routes.travelAdvisory.tollInfo,routes.description',
+      },
       body: JSON.stringify(body),
     }
   );
-  if (!resp.ok) return null;
+  if (!resp.ok) {
+    const err = await resp.json().catch(()=>({}));
+    throw new Error(err.error?.message || 'Routes API エラー');
+  }
   const data = await resp.json();
-  return data.routes?.[0]?.travelAdvisory?.tollInfo ?? null;
+  return data.routes || [];
 }
 
 function geocode(address) {
   return new Promise((resolve, reject) => {
-    new google.maps.Geocoder().geocode({ address, region: 'jp' }, (results, status) => {
-      if (status === 'OK') resolve(results[0].geometry.location);
-      else reject(new Error(`ジオコード失敗: ${address}`));
+    new google.maps.Geocoder().geocode({ address, region:'jp' }, (results, status) => {
+      if (status==='OK') resolve(results[0].geometry.location);
+      else reject(new Error(`「${address}」が見つかりません`));
     });
   });
 }
+// ─────────────────────────────────────────────────────────────
 
-function showResults(directionsResult, tollInfo, avoidTolls) {
-  const leg = directionsResult.routes[0].legs[0];
-  document.getElementById('result-distance').textContent = leg.distance.text;
-  document.getElementById('result-duration').textContent =
-    leg.duration_in_traffic ? leg.duration_in_traffic.text : leg.duration.text;
+// ── Route cards UI ────────────────────────────────────────────
+function renderRouteCards(routes, avoidTolls, hasEtc) {
+  // Find best CP (lowest toll/km) and fastest
+  let cheapestIdx = -1, fastestIdx = 0;
+  let lowestTollPerKm = Infinity, shortestDuration = Infinity;
 
-  const tollCard    = document.getElementById('toll-card');
-  const tollValue   = document.getElementById('result-toll');
-  const tollDetail  = document.getElementById('toll-detail');
-  const tollContent = document.getElementById('toll-detail-content');
+  routes.forEach((r, i) => {
+    const km = r.distanceMeters / 1000;
+    const sec = parseDuration(r.duration);
+    const toll = getTollAmount(r);
 
-  if (avoidTolls) {
-    tollCard.classList.remove('highlight');
-    tollValue.textContent = '無料ルート';
-    tollDetail.style.display = 'none';
-  } else if (tollInfo?.estimatedPrice?.length) {
-    tollCard.classList.add('highlight');
-    const amt = parseInt(tollInfo.estimatedPrice[0].units || 0);
-    tollValue.textContent = `¥${amt.toLocaleString('ja-JP')}`;
-    if (tollInfo.estimatedPrice.length > 1) {
-      const labels = ['通常料金','ETC料金','ETC2.0料金'];
-      tollContent.innerHTML = tollInfo.estimatedPrice.map((p, i) =>
-        `<div class="toll-detail-item ${i===tollInfo.estimatedPrice.length-1?'total':''}">
-          <span>${labels[i]||`料金${i+1}`}</span>
-          <span>¥${parseInt(p.units||0).toLocaleString('ja-JP')}</span>
-        </div>`
-      ).join('') + '<div class="toll-note">※ Google Maps Routes API による実際の料金データ</div>';
-      tollDetail.style.display = 'block';
-    } else {
-      tollContent.innerHTML = '<div class="toll-note">※ Google Maps Routes API による実際の料金データ</div>';
-      tollDetail.style.display = 'block';
+    if (sec < shortestDuration) { shortestDuration = sec; fastestIdx = i; }
+    if (toll > 0) {
+      const perKm = toll / km;
+      if (perKm < lowestTollPerKm) { lowestTollPerKm = perKm; cheapestIdx = i; }
     }
-  } else {
-    tollCard.classList.remove('highlight');
-    tollValue.textContent = '情報なし';
-    tollDetail.style.display = 'none';
-  }
+  });
 
+  const html = routes.map((route, i) => {
+    const km   = (route.distanceMeters / 1000).toFixed(1);
+    const sec  = parseDuration(route.duration);
+    const toll = getTollAmount(route);
+    const tollPerKm = toll > 0 ? Math.round(toll / (route.distanceMeters/1000)) : 0;
+
+    const badges = [];
+    if (i === cheapestIdx) badges.push('<span class="badge badge-cheap">最安</span>');
+    if (i === fastestIdx)  badges.push('<span class="badge badge-fast">最速</span>');
+
+    const tollText = avoidTolls ? '無料ルート'
+      : toll > 0 ? `¥${toll.toLocaleString('ja-JP')}`
+      : '料金情報なし';
+
+    const color = ROUTE_COLORS[i] || '#607d8b';
+
+    return `
+      <div class="route-card ${i===0?'selected':''}" data-index="${i}" onclick="selectRoute(${i})" style="--route-color:${color}">
+        <div class="route-card-header">
+          <span class="route-dot" style="background:${color}"></span>
+          <span class="route-num">ルート ${i+1}</span>
+          <span class="route-badges">${badges.join('')}</span>
+        </div>
+        <div class="route-stats">
+          <div class="route-stat"><span>🛣️</span><span>${km} km</span></div>
+          <div class="route-stat"><span>⏱️</span><span>${formatDuration(sec)}</span></div>
+          <div class="route-stat toll-stat">
+            <span>💴</span>
+            <span class="toll-amount">${tollText}</span>
+            ${tollPerKm > 0 ? `<span class="toll-per-km">¥${tollPerKm}/km</span>` : ''}
+          </div>
+        </div>
+      </div>`;
+  }).join('');
+
+  document.getElementById('route-list').innerHTML = html;
   document.getElementById('result-panel').style.display = 'block';
+}
+
+function getTollAmount(route) {
+  const prices = route.travelAdvisory?.tollInfo?.estimatedPrice;
+  if (!prices?.length) return 0;
+  return parseInt(prices[0].units || 0);
+}
+
+function parseDuration(durationStr) {
+  // format: "1234s" or "1234.567s"
+  return parseFloat((durationStr || '0').replace('s',''));
+}
+
+function formatDuration(sec) {
+  const h = Math.floor(sec / 3600);
+  const m = Math.round((sec % 3600) / 60);
+  if (h > 0) return `${h}時間${m > 0 ? m+'分' : ''}`;
+  return `${m}分`;
 }
 // ─────────────────────────────────────────────────────────────
 
@@ -333,21 +355,21 @@ function showResults(directionsResult, tollInfo, avoidTolls) {
 function useCurrentLocation() {
   if (!navigator.geolocation) { showError('位置情報はサポートされていません'); return; }
   const btn = document.getElementById('locate-btn');
-  btn.textContent = '⌛'; btn.disabled = true;
+  btn.textContent='⌛'; btn.disabled=true;
   navigator.geolocation.getCurrentPosition(
     pos => {
       new google.maps.Geocoder().geocode(
-        { location: { lat: pos.coords.latitude, lng: pos.coords.longitude } },
+        { location:{ lat:pos.coords.latitude, lng:pos.coords.longitude } },
         (results, status) => {
-          btn.textContent = '📍'; btn.disabled = false;
+          btn.textContent='📍'; btn.disabled=false;
           document.getElementById('origin').value =
-            status === 'OK' && results[0] ? results[0].formatted_address
+            status==='OK' && results[0] ? results[0].formatted_address
               : `${pos.coords.latitude.toFixed(5)},${pos.coords.longitude.toFixed(5)}`;
         }
       );
     },
-    () => { btn.textContent = '📍'; btn.disabled = false; showError('現在地の取得に失敗しました'); },
-    { timeout: 10000 }
+    () => { btn.textContent='📍'; btn.disabled=false; showError('現在地の取得に失敗しました'); },
+    { timeout:10000 }
   );
 }
 // ─────────────────────────────────────────────────────────────
@@ -358,9 +380,6 @@ function setLoading(on) {
   document.getElementById('btn-text').style.display    = on ? 'none'   : 'inline';
   document.getElementById('btn-loading').style.display = on ? 'inline' : 'none';
 }
-function showError(msg) {
-  const el = document.getElementById('error-msg');
-  el.textContent = msg; el.style.display = 'block';
-}
-function hideError() { document.getElementById('error-msg').style.display = 'none'; }
+function showError(msg) { const el=document.getElementById('error-msg'); el.textContent=msg; el.style.display='block'; }
+function hideError()    { document.getElementById('error-msg').style.display='none'; }
 // ─────────────────────────────────────────────────────────────
