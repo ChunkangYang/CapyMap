@@ -299,18 +299,12 @@ function extractHighwayICs(route) {
   return { entryIC: ics[0] || null, exitIC: ics[ics.length - 1] || null };
 }
 
-function buildVerifyUrl(entryIC, exitIC, vehicleType, hasEtc) {
-  const carType = DORA_CAR_TYPE[vehicleType] || 1;
-  const etcUse  = hasEtc ? 1 : 0;
-  // ドラぷら (Drive Plaza) — NEXCO official toll calculator
-  if (entryIC && exitIC && entryIC !== exitIC) {
-    return `https://www.driveplaza.com/dp/SearchTop?sName=${encodeURIComponent(entryIC)}&dName=${encodeURIComponent(exitIC)}&way=1&car_type=${carType}&etc_use=${etcUse}`;
-  }
-  // Fallback: Google Maps with coordinates
+function buildVerifyUrl() {
+  // Yahoo! Map supports coordinate-based deep linking for car route search
   if (lastOriginCoord && lastDestCoord) {
-    return `https://www.google.com/maps/dir/?api=1&origin=${lastOriginCoord.lat()},${lastOriginCoord.lng()}&destination=${lastDestCoord.lat()},${lastDestCoord.lng()}&travelmode=driving`;
+    return `https://map.yahoo.co.jp/route/car?from=${lastOriginCoord.lat()},${lastOriginCoord.lng()}&to=${lastDestCoord.lat()},${lastDestCoord.lng()}`;
   }
-  return 'https://www.driveplaza.com/dp/SearchTop';
+  return null;
 }
 // ─────────────────────────────────────────────────────────────
 
@@ -348,14 +342,17 @@ function renderRouteCards(routes, avoidTolls, hasEtc, vehicleType) {
 
     const color = ROUTE_COLORS[i] || '#607d8b';
 
-    // IC extraction for verification link
+    // IC extraction for reference label
     const { entryIC, exitIC } = extractHighwayICs(route);
-    const verifyUrl = !avoidTolls ? buildVerifyUrl(entryIC, exitIC, vehicleType, hasEtc) : null;
     const icLabel = entryIC && exitIC && entryIC !== exitIC
       ? `${entryIC} → ${exitIC}`
       : (entryIC || '');
+    const verifyUrl = !avoidTolls ? buildVerifyUrl() : null;
     const verifyHtml = verifyUrl
-      ? `<a class="verify-link" href="${verifyUrl}" target="_blank" rel="noopener" onclick="event.stopPropagation()">🔍 ドラぷらで確認${icLabel ? `（${icLabel}）` : ''}</a>`
+      ? `<div class="verify-row" onclick="event.stopPropagation()">
+           ${icLabel ? `<span class="ic-label">📍 ${icLabel}</span>` : ''}
+           <a class="verify-link" href="${verifyUrl}" target="_blank" rel="noopener">🗺️ Yahoo!マップで確認</a>
+         </div>`
       : '';
 
     return `
