@@ -24,11 +24,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Inject Google Maps API Key
+      - name: Inject secrets
         env:
-          MAPS_API_KEY: ${{ secrets.MAPS_API_KEY }}
+          MAPS_API_KEY:    ${{ secrets.MAPS_API_KEY }}
+          OAUTH_CLIENT_ID: ${{ secrets.OAUTH_CLIENT_ID }}
         run: |
-          sed -i "s|__INJECT_MAPS_KEY__|${MAPS_API_KEY}|g" index.html
+          sed -i "s|__INJECT_MAPS_KEY__|${MAPS_API_KEY}|g"    index.html
+          sed -i "s|__INJECT_OAUTH_ID__|${OAUTH_CLIENT_ID}|g" index.html
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3

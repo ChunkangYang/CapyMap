@@ -7,10 +7,31 @@
   <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
-  <div id="app">
+
+  <!-- ログイン画面 -->
+  <div id="login-overlay">
+    <div class="login-card">
+      <div class="login-logo">🗺️</div>
+      <h2>CapyMap</h2>
+      <p class="login-desc">高速道路料金計算</p>
+      <div id="google-signin-btn"></div>
+      <p id="login-error"></p>
+    </div>
+  </div>
+
+  <!-- メインアプリ（認証後に表示） -->
+  <div id="app" style="display:none">
     <header>
-      <h1>CapyMap</h1>
-      <p class="subtitle">高速道路料金計算</p>
+      <div class="header-main">
+        <div>
+          <h1>CapyMap</h1>
+          <p class="subtitle">高速道路料金計算</p>
+        </div>
+        <div class="user-area">
+          <span id="user-name"></span>
+          <button id="signout-btn" onclick="signOut()">サインアウト</button>
+        </div>
+      </div>
     </header>
 
     <div id="search-panel">
@@ -106,23 +127,10 @@
   </div>
 
   <script>
-    window.MAPS_API_KEY = '__INJECT_MAPS_KEY__';
+    window.MAPS_API_KEY   = '__INJECT_MAPS_KEY__';
+    window.OAUTH_CLIENT_ID = '__INJECT_OAUTH_ID__';
   </script>
-  <script>
-    (function() {
-      const key = window.MAPS_API_KEY;
-      if (!key || key.length < 20) {
-        document.getElementById('error-msg').style.display = 'block';
-        document.getElementById('error-msg').textContent = 'API Key が設定されていません。';
-        return;
-      }
-      const s = document.createElement('script');
-      s.src = `https://maps.googleapis.com/maps/api/js?key=${key}&libraries=places&language=ja&region=JP&callback=initMap`;
-      s.async = true;
-      s.defer = true;
-      document.head.appendChild(s);
-    })();
-  </script>
-  <script src="js/app.js?v=3"></script>
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
+  <script src="js/app.js?v=4" defer></script>
 </body>
 </html>
