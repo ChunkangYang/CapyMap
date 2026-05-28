@@ -340,10 +340,17 @@ header .subtitle {
   border-bottom: 1px dashed #e0f2e0;
 }
 
-.toll-detail-item:last-child {
+.toll-detail-item.total {
   border-bottom: none;
   font-weight: 700;
   color: var(--toll-color);
+}
+
+.toll-note {
+  font-size: 0.68rem;
+  color: var(--text-secondary);
+  margin-top: 6px;
+  line-height: 1.4;
 }
 
 /* Error Message */

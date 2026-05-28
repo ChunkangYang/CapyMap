@@ -1,394 +1,237 @@
-/* global google */
+// CapyMap - Japan highway toll calculator
+// Map: Leaflet.js + OpenStreetMap (free, no API key)
+// Routing: OSRM public API (free, no API key)
+// Toll: NEXCO standard rate calculation
 
-let map, directionsRenderer, originAutocomplete, destAutocomplete;
+'use strict';
 
-// ── API Usage Tracker ──────────────────────────────────────────
-// Google Maps Platform free credit: $200/month
-// Cost per route search (approximate):
-//   Directions API:  $0.005
-//   Routes API:      $0.005
-//   Geocoding x2:    $0.010
-//   Total per search: ~$0.020
-const BUDGET = {
-  monthly: 200,
-  costPerSearch: 0.020,
-  warnAt: 0.80, // warn at 80% usage
+// ── Japan NEXCO toll rates ────────────────────────────────────
+// Base rate (¥/km) × vehicle multiplier, tiered by distance
+const VEHICLE_CONFIG = {
+  '普通車':   { multiplier: 1.00, label: '普通車' },
+  '軽自動車': { multiplier: 0.80, label: '軽自動車' },
+  '中型車':   { multiplier: 1.20, label: '中型車' },
+  '大型車':   { multiplier: 1.65, label: '大型車' },
+  '特大車':   { multiplier: 2.50, label: '特大車' },
 };
 
+// NEXCO distance-tiered rate for 普通車 base
+const RATE = { t1: 24.6, t2: 17.6, t3: 13.4 }; // ¥/km per tier
+const ETC_DISCOUNT  = 0.10; // standard ETC discount
+const ETC2_DISCOUNT = 0.20; // ETC2.0 discount (used on some roads at night)
+
+function calcNexcoToll(distanceKm, vehicleType) {
+  const cfg = VEHICLE_CONFIG[vehicleType] || VEHICLE_CONFIG['普通車'];
+  let base = 0;
+  if (distanceKm <= 100) {
+    base = distanceKm * RATE.t1;
+  } else if (distanceKm <= 200) {
+    base = 100 * RATE.t1 + (distanceKm - 100) * RATE.t2;
+  } else {
+    base = 100 * RATE.t1 + 100 * RATE.t2 + (distanceKm - 200) * RATE.t3;
+  }
+  return base * cfg.multiplier;
+}
+
+function estimateToll(totalDistanceKm, vehicleType, hasEtc, avoidTolls) {
+  if (avoidTolls) return { regular: 0, etc: 0, highwayKm: 0 };
+
+  // Estimate expressway portion: for routes >50km between cities, ~70-80% is typically highway
+  const ratio = totalDistanceKm < 30 ? 0.3 : totalDistanceKm < 80 ? 0.55 : 0.72;
+  const highwayKm = totalDistanceKm * ratio;
+
+  const regular = Math.round(calcNexcoToll(highwayKm, vehicleType) / 10) * 10;
+  const etc = hasEtc ? Math.round(regular * (1 - ETC_DISCOUNT) / 10) * 10 : regular;
+
+  return { regular, etc, highwayKm: Math.round(highwayKm) };
+}
+// ─────────────────────────────────────────────────────────────
+
+// ── Monthly usage tracker ────────────────────────────────────
+// OSRM + Nominatim are free. Tracker is ready for when Google Maps key is added.
 const UsageTracker = {
   _key: 'capymap_usage',
-
-  _getStore() {
-    const now = new Date();
-    const monthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-    let store = JSON.parse(localStorage.getItem(this._key) || '{}');
-    if (store.month !== monthKey) {
-      store = { month: monthKey, searches: 0, estimatedCost: 0 };
-    }
-    return store;
+  _monthKey() {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
   },
-
-  _save(store) {
-    localStorage.setItem(this._key, JSON.stringify(store));
+  _get() {
+    let s = JSON.parse(localStorage.getItem(this._key) || '{}');
+    if (s.month !== this._monthKey()) s = { month: this._monthKey(), searches: 0 };
+    return s;
   },
-
   record() {
-    const store = this._getStore();
-    store.searches += 1;
-    store.estimatedCost = +(store.searches * BUDGET.costPerSearch).toFixed(3);
-    this._save(store);
+    const s = this._get();
+    s.searches++;
+    localStorage.setItem(this._key, JSON.stringify(s));
     this.render();
   },
-
   render() {
-    const store = this._getStore();
-    const used = store.estimatedCost;
-    const remaining = +(BUDGET.monthly - used).toFixed(2);
-    const pct = Math.min((used / BUDGET.monthly) * 100, 100);
-
+    const s = this._get();
     const el = document.getElementById('usage-bar');
     if (!el) return;
-
-    const fill = el.querySelector('.usage-fill');
-    const label = el.querySelector('.usage-label');
-
-    fill.style.width = `${pct}%`;
-    fill.style.background = pct >= 80 ? '#ea4335' : pct >= 50 ? '#fbbc04' : '#34a853';
-
-    label.textContent = `今月: $${used.toFixed(2)} 使用 / 残り $${remaining.toFixed(2)} (検索 ${store.searches}回)`;
+    el.querySelector('.usage-label').textContent =
+      `今月 ${s.searches} 回検索（OpenStreetMap + OSRM 使用中 — 無料）`;
     el.style.display = 'block';
-
-    if (pct >= 80) {
-      showError(`⚠️ 月次予算の ${Math.round(pct)}% を使用しました（残り $${remaining}）`);
-    }
+    el.querySelector('.usage-fill').style.width = '0%';
   },
 };
-// ──────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────
 
-// Vehicle type to Routes API emission type mapping
-const VEHICLE_EMISSION_MAP = {
-  '普通車': 'GASOLINE',
-  '軽自動車': 'GASOLINE',
-  '中型車': 'GASOLINE',
-  '大型車': 'DIESEL',
-  '特大車': 'DIESEL',
-};
+// ── Map setup ────────────────────────────────────────────────
+let map, routeLayer, originMarker, destMarker;
 
-// ETC toll pass codes for Japan
-const ETC_PASSES = ['JP_ETC', 'JP_ETC2'];
-
-function initMap() {
-  map = new google.maps.Map(document.getElementById('map'), {
-    center: { lat: 35.6762, lng: 139.6503 }, // Tokyo
-    zoom: 10,
-    mapTypeControl: false,
-    streetViewControl: false,
-    fullscreenControl: false,
-    zoomControlOptions: {
-      position: google.maps.ControlPosition.RIGHT_BOTTOM,
-    },
-    gestureHandling: 'greedy',
-    styles: [
-      { featureType: 'poi.business', stylers: [{ visibility: 'off' }] },
-    ],
+function initLeafletMap() {
+  map = L.map('map', {
+    center: [36.2, 138.0], // Center of Japan
+    zoom: 6,
+    zoomControl: true,
   });
 
-  directionsRenderer = new google.maps.DirectionsRenderer({
-    map,
-    suppressMarkers: false,
-    polylineOptions: {
-      strokeColor: '#1a73e8',
-      strokeWeight: 5,
-    },
-  });
-
-  const autocompleteOptions = {
-    componentRestrictions: { country: 'jp' },
-    fields: ['name', 'geometry', 'formatted_address'],
-  };
-
-  originAutocomplete = new google.maps.places.Autocomplete(
-    document.getElementById('origin'),
-    autocompleteOptions
-  );
-
-  destAutocomplete = new google.maps.places.Autocomplete(
-    document.getElementById('destination'),
-    autocompleteOptions
-  );
-
-  originAutocomplete.bindTo('bounds', map);
-  destAutocomplete.bindTo('bounds', map);
-
-  document.getElementById('search-btn').addEventListener('click', searchRoute);
-  document.getElementById('locate-btn').addEventListener('click', useCurrentLocation);
-
-  document.getElementById('has-etc').addEventListener('change', function () {
-    document.getElementById('etc-text').textContent = this.checked ? 'あり' : 'なし';
-  });
-
-  document.getElementById('avoid-tolls').addEventListener('change', function () {
-    document.getElementById('avoid-text').textContent = this.checked ? '回避' : '使用';
-  });
-
-  // Allow Enter key to trigger search
-  ['origin', 'destination'].forEach(id => {
-    document.getElementById(id).addEventListener('keydown', e => {
-      if (e.key === 'Enter') searchRoute();
-    });
-  });
-
-  UsageTracker.render();
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+    maxZoom: 19,
+  }).addTo(map);
 }
 
-function useCurrentLocation() {
-  if (!navigator.geolocation) {
-    showError('位置情報はサポートされていません');
-    return;
-  }
-  const btn = document.getElementById('locate-btn');
-  btn.textContent = '⌛';
-  btn.disabled = true;
+const ICON_BLUE = L.divIcon({
+  html: '<div style="width:14px;height:14px;background:#1a73e8;border:2px solid white;border-radius:50%;box-shadow:0 2px 4px rgba(0,0,0,.4)"></div>',
+  iconSize: [14, 14], iconAnchor: [7, 7], className: '',
+});
+const ICON_RED = L.divIcon({
+  html: '<div style="width:14px;height:14px;background:#ea4335;border:2px solid white;border-radius:50%;box-shadow:0 2px 4px rgba(0,0,0,.4)"></div>',
+  iconSize: [14, 14], iconAnchor: [7, 7], className: '',
+});
+// ─────────────────────────────────────────────────────────────
 
-  navigator.geolocation.getCurrentPosition(
-    pos => {
-      const latlng = new google.maps.LatLng(pos.coords.latitude, pos.coords.longitude);
-      const geocoder = new google.maps.Geocoder();
-      geocoder.geocode({ location: latlng, language: 'ja' }, (results, status) => {
-        btn.textContent = '📍';
-        btn.disabled = false;
-        if (status === 'OK' && results[0]) {
-          document.getElementById('origin').value = results[0].formatted_address;
-        } else {
-          document.getElementById('origin').value = `${pos.coords.latitude.toFixed(5)}, ${pos.coords.longitude.toFixed(5)}`;
-        }
-      });
-    },
-    () => {
-      btn.textContent = '📍';
-      btn.disabled = false;
-      showError('現在地の取得に失敗しました');
-    },
-    { timeout: 10000 }
-  );
+// ── Geocoding via Nominatim ──────────────────────────────────
+async function geocode(address) {
+  const url = `https://nominatim.openstreetmap.org/search?` +
+    `q=${encodeURIComponent(address)}&format=json&countrycodes=jp&limit=1&accept-language=ja`;
+  const resp = await fetch(url, { headers: { 'Accept-Language': 'ja' } });
+  if (!resp.ok) throw new Error('ジオコードに失敗しました');
+  const data = await resp.json();
+  if (!data.length) throw new Error(`「${address}」が見つかりません`);
+  return { lat: parseFloat(data[0].lat), lng: parseFloat(data[0].lon), name: data[0].display_name };
 }
+// ─────────────────────────────────────────────────────────────
 
+// ── Routing via OSRM ─────────────────────────────────────────
+async function getRoute(origin, dest) {
+  const url = `https://router.project-osrm.org/route/v1/driving/` +
+    `${origin.lng},${origin.lat};${dest.lng},${dest.lat}` +
+    `?overview=full&geometries=geojson`;
+  const resp = await fetch(url);
+  if (!resp.ok) throw new Error('経路取得に失敗しました');
+  const data = await resp.json();
+  if (data.code !== 'Ok' || !data.routes.length) throw new Error('経路が見つかりません');
+  return data.routes[0];
+}
+// ─────────────────────────────────────────────────────────────
+
+// ── Main search ──────────────────────────────────────────────
 async function searchRoute() {
   const originVal = document.getElementById('origin').value.trim();
-  const destVal = document.getElementById('destination').value.trim();
-
-  if (!originVal || !destVal) {
-    showError('出発地と目的地を入力してください');
-    return;
-  }
+  const destVal   = document.getElementById('destination').value.trim();
+  if (!originVal || !destVal) { showError('出発地と目的地を入力してください'); return; }
 
   setLoading(true);
   hideError();
   document.getElementById('result-panel').style.display = 'none';
 
-  const avoidTolls = document.getElementById('avoid-tolls').checked;
-  const hasEtc = document.getElementById('has-etc').checked;
   const vehicleType = document.getElementById('vehicle-type').value;
+  const hasEtc      = document.getElementById('has-etc').checked;
+  const avoidTolls  = document.getElementById('avoid-tolls').checked;
 
   try {
-    // Step 1: Use Directions API to draw the route on map
-    const directionsResult = await getDirections(originVal, destVal, avoidTolls);
+    const [originCoord, destCoord] = await Promise.all([
+      geocode(originVal),
+      geocode(destVal),
+    ]);
 
-    // Step 2: Use Routes API v2 to get accurate toll cost
-    let tollInfo = null;
-    if (!avoidTolls) {
-      tollInfo = await getTollInfo(originVal, destVal, vehicleType, hasEtc);
-    }
+    const route = await getRoute(originCoord, destCoord);
+    drawRoute(route, originCoord, destCoord);
 
-    showResults(directionsResult, tollInfo, avoidTolls);
+    const distanceKm = route.distance / 1000;
+    const durationSec = route.duration;
+    const toll = estimateToll(distanceKm, vehicleType, hasEtc, avoidTolls);
+
+    showResults(distanceKm, durationSec, toll, vehicleType, hasEtc, avoidTolls);
     UsageTracker.record();
   } catch (err) {
-    showError(err.message || '経路の取得に失敗しました');
+    showError(err.message || '検索に失敗しました');
   } finally {
     setLoading(false);
   }
 }
 
-function getDirections(origin, destination, avoidTolls) {
-  return new Promise((resolve, reject) => {
-    const service = new google.maps.DirectionsService();
-    service.route(
-      {
-        origin,
-        destination,
-        travelMode: google.maps.TravelMode.DRIVING,
-        region: 'jp',
-        avoidTolls,
-        provideRouteAlternatives: false,
-        drivingOptions: {
-          departureTime: new Date(),
-          trafficModel: google.maps.TrafficModel.BEST_GUESS,
-        },
-      },
-      (result, status) => {
-        if (status === 'OK') {
-          directionsRenderer.setDirections(result);
-          resolve(result);
-        } else {
-          const msgs = {
-            NOT_FOUND: '出発地または目的地が見つかりません',
-            ZERO_RESULTS: '経路が見つかりません',
-            MAX_WAYPOINTS_EXCEEDED: '経由地が多すぎます',
-            INVALID_REQUEST: '入力が正しくありません',
-            REQUEST_DENIED: 'API Key が無効です',
-          };
-          reject(new Error(msgs[status] || `経路取得エラー: ${status}`));
-        }
-      }
-    );
-  });
+function drawRoute(route, origin, dest) {
+  if (routeLayer) map.removeLayer(routeLayer);
+  if (originMarker) map.removeLayer(originMarker);
+  if (destMarker) map.removeLayer(destMarker);
+
+  routeLayer = L.geoJSON(route.geometry, {
+    style: { color: '#1a73e8', weight: 5, opacity: 0.85 },
+  }).addTo(map);
+
+  originMarker = L.marker([origin.lat, origin.lng], { icon: ICON_BLUE }).addTo(map);
+  destMarker   = L.marker([dest.lat, dest.lng],   { icon: ICON_RED  }).addTo(map);
+
+  map.fitBounds(routeLayer.getBounds(), { padding: [40, 40] });
 }
+// ─────────────────────────────────────────────────────────────
 
-async function getTollInfo(origin, destination, vehicleType, hasEtc) {
-  const apiKey = window.MAPS_API_KEY;
+// ── Results display ──────────────────────────────────────────
+function showResults(distanceKm, durationSec, toll, vehicleType, hasEtc, avoidTolls) {
+  document.getElementById('result-distance').textContent = formatDistance(distanceKm);
+  document.getElementById('result-duration').textContent = formatDuration(durationSec);
 
-  // Geocode origin and destination to lat/lng for Routes API
-  const [originLatLng, destLatLng] = await Promise.all([
-    geocodeAddress(origin),
-    geocodeAddress(destination),
-  ]);
-
-  const body = {
-    origin: {
-      location: {
-        latLng: {
-          latitude: originLatLng.lat(),
-          longitude: originLatLng.lng(),
-        },
-      },
-    },
-    destination: {
-      location: {
-        latLng: {
-          latitude: destLatLng.lat(),
-          longitude: destLatLng.lng(),
-        },
-      },
-    },
-    travelMode: 'DRIVE',
-    routingPreference: 'TRAFFIC_AWARE',
-    extraComputations: ['TOLLS'],
-    routeModifiers: {
-      vehicleInfo: {
-        emissionType: VEHICLE_EMISSION_MAP[vehicleType] || 'GASOLINE',
-      },
-      ...(hasEtc ? { tollPasses: ETC_PASSES } : {}),
-    },
-  };
-
-  const resp = await fetch(
-    `https://routes.googleapis.com/directions/v2:computeRoutes?key=${apiKey}`,
-    {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Goog-FieldMask':
-          'routes.duration,routes.distanceMeters,routes.travelAdvisory.tollInfo',
-      },
-      body: JSON.stringify(body),
-    }
-  );
-
-  if (!resp.ok) {
-    const errBody = await resp.json().catch(() => ({}));
-    console.warn('Routes API error:', errBody);
-    return null; // Toll info unavailable, but don't fail the whole request
-  }
-
-  const data = await resp.json();
-  const route = data.routes && data.routes[0];
-  if (!route) return null;
-
-  return route.travelAdvisory && route.travelAdvisory.tollInfo
-    ? route.travelAdvisory.tollInfo
-    : null;
-}
-
-function geocodeAddress(address) {
-  return new Promise((resolve, reject) => {
-    const geocoder = new google.maps.Geocoder();
-    geocoder.geocode({ address, region: 'jp', language: 'ja' }, (results, status) => {
-      if (status === 'OK' && results[0]) {
-        resolve(results[0].geometry.location);
-      } else {
-        reject(new Error(`ジオコード失敗: ${address}`));
-      }
-    });
-  });
-}
-
-function showResults(directionsResult, tollInfo, avoidTolls) {
-  const leg = directionsResult.routes[0].legs[0];
-  const distance = leg.distance.text;
-  const duration = leg.duration_in_traffic
-    ? leg.duration_in_traffic.text
-    : leg.duration.text;
-
-  document.getElementById('result-distance').textContent = distance;
-  document.getElementById('result-duration').textContent = duration;
-
-  const tollCard = document.getElementById('toll-card');
+  const tollCard  = document.getElementById('toll-card');
   const tollValue = document.getElementById('result-toll');
   const tollDetail = document.getElementById('toll-detail');
+  const tollContent = document.getElementById('toll-detail-content');
 
   if (avoidTolls) {
     tollCard.classList.remove('highlight');
     tollValue.textContent = '無料ルート';
     tollDetail.style.display = 'none';
-  } else if (tollInfo && tollInfo.estimatedPrice && tollInfo.estimatedPrice.length > 0) {
-    tollCard.classList.add('highlight');
-    const price = tollInfo.estimatedPrice[0];
-    const amount = parseInt(price.units || 0);
-    const currency = price.currencyCode || 'JPY';
-    tollValue.textContent = formatCurrency(amount, currency);
-
-    // Show detail if multiple prices (e.g., ETC discount vs regular)
-    if (tollInfo.estimatedPrice.length > 1) {
-      renderTollDetail(tollInfo.estimatedPrice);
-      tollDetail.style.display = 'block';
-    } else {
-      tollDetail.style.display = 'none';
-    }
   } else {
-    tollCard.classList.remove('highlight');
-    tollValue.textContent = '情報なし';
-    tollDetail.style.display = 'none';
+    tollCard.classList.add('highlight');
+    const displayAmt = hasEtc ? toll.etc : toll.regular;
+    tollValue.textContent = displayAmt > 0 ? `¥${displayAmt.toLocaleString('ja-JP')}` : '料金なし';
+
+    const etcDiff = toll.regular - toll.etc;
+    tollContent.innerHTML = `
+      <div class="toll-detail-item"><span>高速区間（推定）</span><span>${toll.highwayKm} km</span></div>
+      <div class="toll-detail-item"><span>通常料金</span><span>¥${toll.regular.toLocaleString('ja-JP')}</span></div>
+      ${hasEtc ? `<div class="toll-detail-item"><span>ETC割引（-10%）</span><span>-¥${etcDiff.toLocaleString('ja-JP')}</span></div>` : ''}
+      <div class="toll-detail-item total"><span>${hasEtc ? 'ETC料金' : '合計料金'}</span><span>¥${displayAmt.toLocaleString('ja-JP')}</span></div>
+      <div class="toll-note">※ NEXCO標準料金による概算。実際の料金は異なる場合があります。</div>
+    `;
+    tollDetail.style.display = 'block';
   }
 
   document.getElementById('result-panel').style.display = 'block';
 }
 
-function renderTollDetail(prices) {
-  const labels = ['ETC割引', 'ETC2.0割引', '通常料金'];
-  const content = prices.map((price, i) => {
-    const amount = parseInt(price.units || 0);
-    return `<div class="toll-detail-item">
-      <span>${labels[i] || `料金 ${i + 1}`}</span>
-      <span>${formatCurrency(amount, price.currencyCode)}</span>
-    </div>`;
-  }).join('');
-  document.getElementById('toll-detail-content').innerHTML = content;
+function formatDistance(km) {
+  return km >= 1 ? `${km.toFixed(1)} km` : `${Math.round(km * 1000)} m`;
 }
 
-function formatCurrency(amount, currency) {
-  if (currency === 'JPY' || !currency) {
-    return `¥${amount.toLocaleString('ja-JP')}`;
-  }
-  return `${amount.toLocaleString()} ${currency}`;
+function formatDuration(sec) {
+  const h = Math.floor(sec / 3600);
+  const m = Math.round((sec % 3600) / 60);
+  if (h > 0) return `${h}時間${m > 0 ? m + '分' : ''}`;
+  return `${m}分`;
 }
+// ─────────────────────────────────────────────────────────────
 
-function setLoading(loading) {
+// ── UI helpers ───────────────────────────────────────────────
+function setLoading(on) {
   const btn = document.getElementById('search-btn');
-  const btnText = document.getElementById('btn-text');
-  const btnLoading = document.getElementById('btn-loading');
-  btn.disabled = loading;
-  btnText.style.display = loading ? 'none' : 'inline';
-  btnLoading.style.display = loading ? 'inline' : 'none';
+  btn.disabled = on;
+  document.getElementById('btn-text').style.display    = on ? 'none'   : 'inline';
+  document.getElementById('btn-loading').style.display = on ? 'inline' : 'none';
 }
 
 function showError(msg) {
@@ -400,3 +243,56 @@ function showError(msg) {
 function hideError() {
   document.getElementById('error-msg').style.display = 'none';
 }
+// ─────────────────────────────────────────────────────────────
+
+// ── Current location ─────────────────────────────────────────
+function useCurrentLocation() {
+  if (!navigator.geolocation) { showError('位置情報はサポートされていません'); return; }
+  const btn = document.getElementById('locate-btn');
+  btn.textContent = '⌛';
+  btn.disabled = true;
+
+  navigator.geolocation.getCurrentPosition(
+    async pos => {
+      try {
+        const url = `https://nominatim.openstreetmap.org/reverse?` +
+          `lat=${pos.coords.latitude}&lon=${pos.coords.longitude}&format=json&accept-language=ja`;
+        const resp = await fetch(url);
+        const data = await resp.json();
+        document.getElementById('origin').value = data.display_name || '現在地';
+      } catch {
+        document.getElementById('origin').value =
+          `${pos.coords.latitude.toFixed(5)}, ${pos.coords.longitude.toFixed(5)}`;
+      } finally {
+        btn.textContent = '📍';
+        btn.disabled = false;
+      }
+    },
+    () => { btn.textContent = '📍'; btn.disabled = false; showError('現在地の取得に失敗しました'); },
+    { timeout: 10000 }
+  );
+}
+// ─────────────────────────────────────────────────────────────
+
+// ── Init ─────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+  initLeafletMap();
+  UsageTracker.render();
+
+  document.getElementById('search-btn').addEventListener('click', searchRoute);
+  document.getElementById('locate-btn').addEventListener('click', useCurrentLocation);
+
+  document.getElementById('has-etc').addEventListener('change', function () {
+    document.getElementById('etc-text').textContent = this.checked ? 'あり' : 'なし';
+  });
+  document.getElementById('avoid-tolls').addEventListener('change', function () {
+    document.getElementById('avoid-text').textContent = this.checked ? '回避' : '使用';
+  });
+
+  ['origin', 'destination'].forEach(id => {
+    document.getElementById(id).addEventListener('keydown', e => {
+      if (e.key === 'Enter') searchRoute();
+    });
+  });
+});
+// ─────────────────────────────────────────────────────────────
