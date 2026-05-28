@@ -3,36 +3,48 @@
 最後更新: 2026-05-28
 
 ## 目標
-日本の高速道路料金を計算できるモバイル対応マップアプリ。  
-GitHub Pages にデプロイ、Google Maps API 使用。
+日本の高速道路料金を計算できるモバイル対応マップアプリ。GitHub Pages にデプロイ済み。
 
 ## 現在の状態
-⏳ **待機中 — API Key の設定待ち**
+✅ **稼働中 — API Key 不要で完全動作**
+
+URL: https://chunkangyang.github.io/CapyMap/
 
 ## 完成済みの実装
-- [x] `index.html` — メイン UI（出発地・目的地入力、車種・ETC 設定、地図）
+- [x] `index.html` — モバイル対応 UI
 - [x] `css/style.css` — モバイルファーストデザイン
 - [x] `js/app.js` — 経路検索・料金計算ロジック
-  - Google Maps Directions API で経路描画
-  - Routes API v2 (`extraComputations: TOLLS`) で通行料金計算
-  - Places Autocomplete で住所入力補完
+  - **Leaflet.js + OpenStreetMap** で地図表示（無料）
+  - **OSRM API** で経路計算・地図描画（無料）
+  - **Nominatim** で住所→座標変換（無料）
+  - **NEXCO標準料金** で通行料金概算（車種別・ETC割引対応）
   - 現在地ボタン（Geolocation API）
-- [x] `docs/SETUP.md` — API Key 設定手順
+  - 月次使用量トラッカー
+- [x] `.github/workflows/deploy.yml` — GitHub Actions 自動デプロイ
 
-## 次のステップ
-1. ユーザーが Google Cloud Console で API Key を取得
-2. `index.html` の `REPLACE_WITH_YOUR_API_KEY` を実際の Key に置き換え
-3. 動作確認後 GitHub Pages にデプロイ
+## 動作確認済み
+| テスト | 結果 |
+|--------|------|
+| 東京駅→大阪駅（普通車・ETC） | 距離 494.2km / 6時間16分 / ¥5,680 |
+| GitHub Pages デプロイ | ✅ 正常 |
+| モバイルレイアウト | ✅ viewport 設定済み |
 
 ## 機能一覧
 | 機能 | 状態 |
 |------|------|
-| 地図表示 | ✅ |
-| 住所オートコンプリート | ✅ |
-| 経路計算・描画 | ✅ |
-| 通行料金計算 | ✅ |
-| ETC 割引対応 | ✅ |
-| 車種選択（普通車/軽自動車/中型/大型/特大） | ✅ |
+| 地図表示（OpenStreetMap） | ✅ |
+| 経路計算・描画（OSRM） | ✅ |
+| 住所入力 | ✅ |
+| 通行料金概算（NEXCO） | ✅ |
+| ETC割引対応 | ✅ |
+| 車種選択（普通車/軽/中型/大型/特大） | ✅ |
 | 有料道路回避オプション | ✅ |
 | 現在地ボタン | ✅ |
 | モバイル対応 | ✅ |
+| API Key 不要 | ✅ |
+| 月次使用量表示 | ✅ |
+
+## 今後の拡張（オプション）
+- Google Maps API Key を追加 → より正確な料金・リアルタイム渋滞情報
+- 複数経路の比較表示
+- 経由地追加
