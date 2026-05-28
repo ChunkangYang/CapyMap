@@ -116,6 +116,10 @@ const UsageTracker = {
 let map, originAutocomplete, destAutocomplete;
 let routePolylines = [];
 let selectedRouteIndex = 0;
+let lastOriginCoord = null;
+let lastDestCoord = null;
+let lastVehicleType = '普通車';
+let lastHasEtc = true;
 
 window.initMap = function() {
   map = new google.maps.Map(document.getElementById('map'), {
@@ -215,6 +219,10 @@ async function searchRoutes() {
 
   try {
     const [oCoord, dCoord] = await Promise.all([geocode(originVal), geocode(destVal)]);
+    lastOriginCoord = oCoord;
+    lastDestCoord = dCoord;
+    lastVehicleType = vehicleType;
+    lastHasEtc = hasEtc;
     const routes = await fetchRoutes(oCoord, dCoord, vehicleType, hasEtc, avoidTolls);
 
     if (!routes.length) throw new Error('経路が見つかりません');
@@ -222,7 +230,7 @@ async function searchRoutes() {
     window._lastRoutes = routes;
     selectedRouteIndex = 0;
     drawRoutes(routes, 0);
-    renderRouteCards(routes, avoidTolls, hasEtc);
+    renderRouteCards(routes, avoidTolls, hasEtc, vehicleType);
     UsageTracker.record();
   } catch(err) {
     showError(err.message || '経路の取得に失敗しました');
@@ -252,7 +260,7 @@ async function fetchRoutes(oCoord, dCoord, vehicleType, hasEtc, avoidTolls) {
       method:'POST',
       headers:{
         'Content-Type':'application/json',
-        'X-Goog-FieldMask':'routes.duration,routes.distanceMeters,routes.polyline.encodedPolyline,routes.travelAdvisory.tollInfo,routes.description',
+        'X-Goog-FieldMask':'routes.duration,routes.distanceMeters,routes.polyline.encodedPolyline,routes.travelAdvisory.tollInfo,routes.description,routes.legs.steps.navigationInstruction.instructions',
       },
       body: JSON.stringify(body),
     }
@@ -275,8 +283,39 @@ function geocode(address) {
 }
 // ─────────────────────────────────────────────────────────────
 
+// ── Toll verification helpers ─────────────────────────────────
+const DORA_CAR_TYPE = { '普通車':1, '軽自動車':2, '中型車':3, '大型車':4, '特大車':5 };
+
+function extractHighwayICs(route) {
+  const steps = route.legs?.[0]?.steps || [];
+  // Match IC / JCT names: Japanese chars + IC or JCT suffix
+  const icRe = /([ぁ-鿿\w]{1,12}(?:IC|JCT))/;
+  const ics = [];
+  for (const step of steps) {
+    const instr = step.navigationInstruction?.instructions || '';
+    const m = instr.match(icRe);
+    if (m && !ics.includes(m[1])) ics.push(m[1]);
+  }
+  return { entryIC: ics[0] || null, exitIC: ics[ics.length - 1] || null };
+}
+
+function buildVerifyUrl(entryIC, exitIC, vehicleType, hasEtc) {
+  const carType = DORA_CAR_TYPE[vehicleType] || 1;
+  const etcUse  = hasEtc ? 1 : 0;
+  // ドラぷら (Drive Plaza) — NEXCO official toll calculator
+  if (entryIC && exitIC && entryIC !== exitIC) {
+    return `https://www.driveplaza.com/dp/SearchTop?sName=${encodeURIComponent(entryIC)}&dName=${encodeURIComponent(exitIC)}&way=1&car_type=${carType}&etc_use=${etcUse}`;
+  }
+  // Fallback: Google Maps with coordinates
+  if (lastOriginCoord && lastDestCoord) {
+    return `https://www.google.com/maps/dir/?api=1&origin=${lastOriginCoord.lat()},${lastOriginCoord.lng()}&destination=${lastDestCoord.lat()},${lastDestCoord.lng()}&travelmode=driving`;
+  }
+  return 'https://www.driveplaza.com/dp/SearchTop';
+}
+// ─────────────────────────────────────────────────────────────
+
 // ── Route cards UI ────────────────────────────────────────────
-function renderRouteCards(routes, avoidTolls, hasEtc) {
+function renderRouteCards(routes, avoidTolls, hasEtc, vehicleType) {
   // Find best CP (lowest toll/km) and fastest
   let cheapestIdx = -1, fastestIdx = 0;
   let lowestTollPerKm = Infinity, shortestDuration = Infinity;
@@ -309,6 +348,16 @@ function renderRouteCards(routes, avoidTolls, hasEtc) {
 
     const color = ROUTE_COLORS[i] || '#607d8b';
 
+    // IC extraction for verification link
+    const { entryIC, exitIC } = extractHighwayICs(route);
+    const verifyUrl = !avoidTolls ? buildVerifyUrl(entryIC, exitIC, vehicleType, hasEtc) : null;
+    const icLabel = entryIC && exitIC && entryIC !== exitIC
+      ? `${entryIC} → ${exitIC}`
+      : (entryIC || '');
+    const verifyHtml = verifyUrl
+      ? `<a class="verify-link" href="${verifyUrl}" target="_blank" rel="noopener" onclick="event.stopPropagation()">🔍 ドラぷらで確認${icLabel ? `（${icLabel}）` : ''}</a>`
+      : '';
+
     return `
       <div class="route-card ${i===0?'selected':''}" data-index="${i}" onclick="selectRoute(${i})" style="--route-color:${color}">
         <div class="route-card-header">
@@ -325,6 +374,7 @@ function renderRouteCards(routes, avoidTolls, hasEtc) {
             ${tollPerKm > 0 ? `<span class="toll-per-km">¥${tollPerKm}/km</span>` : ''}
           </div>
         </div>
+        ${verifyHtml}
       </div>`;
   }).join('');
 

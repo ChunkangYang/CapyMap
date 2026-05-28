@@ -468,6 +468,21 @@ header .subtitle {
   font-weight: 400 !important;
 }
 
+.verify-link {
+  display: block;
+  margin-top: 8px;
+  padding-top: 7px;
+  border-top: 1px dashed var(--border);
+  font-size: 0.72rem;
+  color: var(--primary);
+  text-decoration: none;
+  text-align: right;
+}
+
+.verify-link:hover {
+  text-decoration: underline;
+}
+
 /* Toll Detail (kept for compatibility) */
 .toll-detail {
   margin-top: 10px;
