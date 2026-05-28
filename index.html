@@ -4,7 +4,6 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
   <title>CapyMap - 高速道路料金計算</title>
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="">
   <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
@@ -106,7 +105,24 @@
     <div id="map"></div>
   </div>
 
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+  <script>
+    window.MAPS_API_KEY = 'REPLACE_WITH_YOUR_API_KEY';
+  </script>
+  <script>
+    (function() {
+      const key = window.MAPS_API_KEY;
+      if (!key || key === 'REPLACE_WITH_YOUR_API_KEY') {
+        document.getElementById('error-msg').style.display = 'block';
+        document.getElementById('error-msg').textContent = 'API Key が設定されていません。';
+        return;
+      }
+      const s = document.createElement('script');
+      s.src = `https://maps.googleapis.com/maps/api/js?key=${key}&libraries=places&language=ja&region=JP&callback=initMap`;
+      s.async = true;
+      s.defer = true;
+      document.head.appendChild(s);
+    })();
+  </script>
   <script src="js/app.js"></script>
 </body>
 </html>
