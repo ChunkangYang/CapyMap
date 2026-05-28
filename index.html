@@ -106,12 +106,12 @@
   </div>
 
   <script>
-    window.MAPS_API_KEY = 'REPLACE_WITH_YOUR_API_KEY';
+    window.MAPS_API_KEY = '__INJECT_MAPS_KEY__';
   </script>
   <script>
     (function() {
       const key = window.MAPS_API_KEY;
-      if (!key || key.startsWith('REPLACE')) {
+      if (!key || key.length < 20) {
         document.getElementById('error-msg').style.display = 'block';
         document.getElementById('error-msg').textContent = 'API Key が設定されていません。';
         return;
@@ -123,6 +123,6 @@
       document.head.appendChild(s);
     })();
   </script>
-  <script src="js/app.js?v=2"></script>
+  <script src="js/app.js?v=3"></script>
 </body>
 </html>
