@@ -311,7 +311,8 @@ function extractHighwayICs(route) {
   const SPLIT_RE = /方面の|方面|右側の|左側の|本線|の(?=ランプ)|の(?=出口)|の(?=入口)/;
 
   function extractFromStep(step) {
-    const txt = cleanTxt(step?.navigationInstruction?.instructions);
+    // Strip whitespace so "横浜新道 出口" → "横浜新道出口" matches the prefix+suffix regex.
+    const txt = cleanTxt(step?.navigationInstruction?.instructions).replace(/[\s　]+/g, '');
     const segments = txt.split(SPLIT_RE);
     const out = [];
     for (const seg of segments) {
@@ -453,6 +454,15 @@ function getPlacesService() {
   return _placesService;
 }
 
+// Result must look like an actual highway entrance/exit, not e.g. a parking lot named "○○ AIC".
+function isLikelyHighwayRamp(name) {
+  if (/(駐車場|ホテル|レストラン|カフェ|店舗|タワー|ビル|マンション|アパート|ガソリン|スタンド|医院|クリニック|病院|薬局|郵便|銀行|駅$)/.test(name)) return false;
+  if (/^(首都高速|阪神高速|名古屋高速|広島高速|福岡高速|本州四国連絡高速)/.test(name)) return true;
+  if (/[一-龯ぁ-んァ-ヶー](IC|JCT)$/.test(name)) return true;
+  if (/[一-龯ぁ-んァ-ヶー](ランプ|入口|出口|入出口|出入口|料金所)$/.test(name)) return true;
+  return false;
+}
+
 function findRampNameAt(coord) {
   const ps = getPlacesService();
   if (!ps || !coord) return Promise.resolve(null);
@@ -460,7 +470,7 @@ function findRampNameAt(coord) {
     ps.nearbySearch({ location: coord, radius, keyword: kw }, (results, status) => {
       if (status !== google.maps.places.PlacesServiceStatus.OK || !results) return resolve(null);
       const cands = results
-        .filter(r => /(入口|出口|入出口|出入口|IC|ランプ|JCT)/.test(r.name))
+        .filter(r => isLikelyHighwayRamp(r.name))
         .map(r => {
           const lat = r.geometry.location.lat();
           const lng = r.geometry.location.lng();
@@ -468,13 +478,14 @@ function findRampNameAt(coord) {
         })
         .sort((a, b) => a.dist - b.dist);
       if (!cands.length) return resolve(null);
-      resolve(parseRampName(cands[0].name));
+      const parsed = parseRampName(cands[0].name);
+      resolve(parsed && parsed.raw ? parsed : null);
     });
   });
-  // Try in order: 首都高速 → 高速 → IC
-  return tryKeyword('首都高速', 1200)
+  return tryKeyword('首都高速', 1500)
     .then(r => r || tryKeyword('高速道路', 1500))
-    .then(r => r || tryKeyword('IC', 1500));
+    .then(r => r || tryKeyword('インターチェンジ', 2000))
+    .then(r => r || tryKeyword('ランプ', 1500));
 }
 
 async function enrichRouteICs(route) {
