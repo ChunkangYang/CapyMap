@@ -543,20 +543,50 @@ async function enrichRouteICs(route) {
   return ics;
 }
 
-// Only return a URL when we can deep-link to a real result page. Never link to a form
-// the user would need to fill in — that violates the project's "no manual input" rule.
-function buildDoraplaUrl(entryRaw, exitRaw, entryName, exitName, vehicleType) {
-  if (!entryRaw || !exitRaw) return null;
-  if (!isDoraplaSearchable(entryName) || !isDoraplaSearchable(exitName)) return null;
+// Build ドラぷら URL. Strategy:
+//  1. Best path: real IC names from text extraction (kind=1, IC-name search)
+//  2. Fallback: city/place names from origin/destination (kind=2, place-name search) —
+//     ドラぷら finds nearest IC automatically. Works for any trip without manual input.
+function buildDoraplaUrl(entryRaw, exitRaw, entryName, exitName, vehicleType, originPlace, destPlace) {
   const carType = DORAPLA_CAR[vehicleType] || 1;
-  const q = new URLSearchParams({
-    startPlaceKana:  entryRaw,
-    arrivePlaceKana: exitRaw,
-    carType: String(carType),
-    priority: '3',
-    kind: '1',
-  });
-  return `https://www.driveplaza.com/dp/SearchQuick?${q.toString()}`;
+  // Path 1: deep-link with real IC names
+  if (entryRaw && exitRaw && isDoraplaSearchable(entryName) && isDoraplaSearchable(exitName)) {
+    const q = new URLSearchParams({
+      startPlaceKana: entryRaw,
+      arrivePlaceKana: exitRaw,
+      carType: String(carType),
+      priority: '3',
+      kind: '1',
+    });
+    return `https://www.driveplaza.com/dp/SearchQuick?${q.toString()}`;
+  }
+  // Path 2: place-name search using origin/destination city
+  if (originPlace && destPlace) {
+    const q = new URLSearchParams({
+      startPlaceKana: originPlace,
+      arrivePlaceKana: destPlace,
+      carType: String(carType),
+      priority: '3',
+      kind: '2',
+    });
+    return `https://www.driveplaza.com/dp/SearchQuick?${q.toString()}`;
+  }
+  return null;
+}
+
+// Extract a usable city name from a free-form Japanese address. Tries city/ward suffix,
+// then station suffix, then a kanji-only prefix as fallback.
+function extractPlaceName(addr) {
+  if (!addr) return null;
+  const t = addr.trim();
+  // 都/道/府/県 + 市/区/町/村 → take the city portion
+  const m1 = t.match(/(?:[^都道府県]*?[都道府県])?([一-龯ぁ-んァ-ヶー]+?[市区町村])/);
+  if (m1) return m1[1].replace(/[市区町村]$/, '');
+  // Station name: strip 駅
+  if (/駅/.test(t)) return t.replace(/^.*?(都|道|府|県)/, '').replace(/駅.*$/, '');
+  // Fallback: first run of kanji/kana chars
+  const m2 = t.match(/[一-龯ぁ-んァ-ヶー]{2,6}/);
+  return m2 ? m2[0] : null;
 }
 // ─────────────────────────────────────────────────────────────
 
@@ -600,7 +630,9 @@ function renderRouteCards(routes, avoidTolls, hasEtc, vehicleType) {
       ? `${entryIC} → ${exitIC}`
       : (entryIC || exitIC || '');
     const gmapsUrl = buildGoogleMapsUrl();
-    const doraUrl  = !avoidTolls ? buildDoraplaUrl(entryRaw, exitRaw, entryIC, exitIC, vehicleType) : null;
+    const originPlace = extractPlaceName(lastOriginText);
+    const destPlace   = extractPlaceName(lastDestText);
+    const doraUrl  = !avoidTolls ? buildDoraplaUrl(entryRaw, exitRaw, entryIC, exitIC, vehicleType, originPlace, destPlace) : null;
     const verifyHtml = (gmapsUrl || doraUrl)
       ? `<div class="verify-row" onclick="event.stopPropagation()">
            ${icLabel ? `<span class="ic-label">📍 ${icLabel}</span>` : ''}
