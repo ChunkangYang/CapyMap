@@ -484,17 +484,13 @@ function getPlacesService() {
   return _placesService;
 }
 
-// Real highway entrance names are tightly structured: short prefix (≤6 Japanese chars)
-// plus a standard suffix (IC/JCT/ランプ/入口/出口/料金所). Anything else — parking lots,
-// subway exits, community centers ending in "出口" — gets rejected.
+// Places returns many short-named POIs (parks, schools, parking lots) that structurally
+// look like an IC name. To avoid those false positives in the geocoding fallback we accept
+// ONLY places explicitly tagged with a major tollway operator prefix, e.g.
+// "首都高速銀座入口". Real NEXCO ICs like "厚木IC" are already extracted from text and
+// never reach this filter.
 function isLikelyHighwayRamp(name) {
-  // Whole-name patterns. No extra prefix/suffix text allowed.
-  // 1) Major-tollway-operator prefix (e.g. "首都高速銀座入口")
-  if (/^(首都高速|阪神高速|名古屋高速|広島高速|福岡高速|本州四国連絡高速)[一-龯ぁ-んァ-ヶー\d０-９号線]{0,10}?(入口|出口|入出口|出入口|ランプ|IC|JCT|料金所|本線料金所)$/.test(name)) return true;
-  // 2) Short standalone IC: ≤6 Japanese chars + suffix
-  if (/^[一-龯ぁ-んァ-ヶー]{1,6}(IC|JCT|ランプ|料金所|本線料金所)$/.test(name)) return true;
-  if (/^[一-龯ぁ-んァ-ヶー]{1,6}(入口|出口|入出口|出入口)$/.test(name)) return true;
-  return false;
+  return /^(首都高速|阪神高速|名古屋高速|広島高速|福岡高速|本州四国連絡高速)[一-龯ぁ-んァ-ヶー\d０-９号線]{0,10}?(入口|出口|入出口|出入口|ランプ|IC|JCT|料金所|本線料金所)$/.test(name);
 }
 
 // Find the nearest highway ramp/IC by name around coord. We use rankBy DISTANCE because
