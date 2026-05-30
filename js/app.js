@@ -464,16 +464,21 @@ function getPlacesService() {
 
 // Filter Places nearbySearch results to actual highway ramps/ICs. Accepts:
 //  (a) Urban tollway operator prefix: "首都高速○○入口" etc.
-//  (b) Plain NEXCO IC name: "戸田南IC", "厚木IC" — 2-8 kanji/kana + IC/ランプ suffix.
-// We had to widen this beyond (a) because Google instructions often omit the entry IC
-// name entirely (only mention downstream JCT/方面 landmarks), so text extraction picks
-// JCT and Places must supply the real NEXCO IC name from the maneuver coordinate.
-// rankBy DISTANCE keeps false positives down — the first IC-suffixed place at the
-// ramp's exact coord is essentially always the real IC.
+//  (b) Plain NEXCO IC name: KANJI-ONLY prefix + IC suffix.
+// Heavy guards against false positives:
+//  - Plain pattern excludes katakana entirely — too many lighting/electronics
+//    companies like "アラジンランプ" share the ランプ suffix.
+//  - Plain pattern excludes ランプ suffix entirely — only "IC" suffix accepted.
+//    NEXCO ramp names use IC in practice; pure ランプ-suffix is almost always
+//    a non-highway business.
+//  - Explicit business-prefix denylist.
+// rankBy DISTANCE keeps the IC at the maneuver coord on top, so this conservative
+// filter still catches the right place; missing a match is safer than picking junk.
 function isLikelyHighwayRamp(name) {
+  if (!name) return false;
+  if (/^(株式会社|有限会社|合同会社|社団法人|財団法人)/.test(name)) return false;
   if (/^(首都高速|阪神高速|名古屋高速|広島高速|福岡高速|本州四国連絡高速)[一-龯ぁ-んァ-ヶー\d０-９号線]{0,10}?(入口|出口|入出口|出入口|ランプ|IC|JCT|料金所|本線料金所)$/.test(name)) return true;
-  // NEXCO/その他 plain pattern. Require 2-8 char prefix to reject 1-char POI names.
-  if (/^[一-龯ぁ-んァ-ヶー]{2,8}(IC|ランプ)$/.test(name)) return true;
+  if (/^[一-龯]{2,8}IC$/.test(name)) return true;
   return false;
 }
 
@@ -483,13 +488,20 @@ function isLikelyHighwayRamp(name) {
 function findRampNameAt(coord, isEntry) {
   const ps = getPlacesService();
   if (!ps || !coord) return Promise.resolve(null);
+  const label = isEntry ? 'ENTRY' : 'EXIT';
+  console.log(`[IC-debug] ${label} maneuver coord:`, coord, `→ https://www.google.com/maps?q=${coord.lat},${coord.lng}`);
   const tryKeyword = (kw) => new Promise(resolve => {
     ps.nearbySearch({
       location: coord,
       rankBy: google.maps.places.RankBy.DISTANCE,
       keyword: kw,
     }, (results, status) => {
-      if (status !== google.maps.places.PlacesServiceStatus.OK || !results) return resolve(null);
+      if (status !== google.maps.places.PlacesServiceStatus.OK || !results) {
+        console.log(`[IC-debug] ${label} kw="${kw}" → status=${status}, no results`);
+        return resolve(null);
+      }
+      const top = results.slice(0, 5).map(r => ({ name: r.name, accept: isLikelyHighwayRamp(r.name) }));
+      console.log(`[IC-debug] ${label} kw="${kw}" top5:`, top);
       for (const r of results) {
         if (isLikelyHighwayRamp(r.name)) {
           const parsed = parseRampName(r.name);
@@ -499,7 +511,6 @@ function findRampNameAt(coord, isEntry) {
       resolve(null);
     });
   });
-  // Search for 入口/出口 first (proper highway access points), fall back to IC/ランプ.
   const primary = isEntry ? '入口' : '出口';
   return tryKeyword(primary)
     .then(r => r || tryKeyword('IC'))
