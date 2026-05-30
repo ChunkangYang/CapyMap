@@ -421,22 +421,35 @@ function getEntryCoord(route) {
   const ll = (useEnd ? steps[idx].endLocation : steps[idx].startLocation)?.latLng;
   return ll ? { lat: ll.latitude, lng: ll.longitude } : null;
 }
-// Exit coord: the LAST step containing "出口" — its startLocation is on the highway
-// right before leaving it, which is where the exit IC sits.
+// Prefer the last RAMP step that explicitly mentions "出口" — that's a real highway exit
+// ramp, not a downstream non-highway turn that also happens to mention 出口.
 function getExitCoord(route) {
   const steps = route.legs?.[0]?.steps || [];
-  let idx = -1;
+  // 1st choice: last RAMP_*/OFF_RAMP with 出口 in text
   for (let i = steps.length - 1; i >= 0; i--) {
-    if (/出口/.test(steps[i].navigationInstruction?.instructions || '')) { idx = i; break; }
-  }
-  if (idx < 0) {
-    for (let i = steps.length - 1; i >= 0; i--) {
-      if (/^(RAMP|OFF_RAMP)/.test(steps[i].navigationInstruction?.maneuver || '')) { idx = i; break; }
+    const s = steps[i];
+    const mv = s.navigationInstruction?.maneuver || '';
+    const txt = s.navigationInstruction?.instructions || '';
+    if (/^(RAMP|OFF_RAMP)/.test(mv) && /出口/.test(txt)) {
+      const ll = s.startLocation?.latLng;
+      if (ll) return { lat: ll.latitude, lng: ll.longitude };
     }
   }
-  if (idx < 0) return null;
-  const ll = steps[idx].startLocation?.latLng;
-  return ll ? { lat: ll.latitude, lng: ll.longitude } : null;
+  // 2nd: last 出口 text alone
+  for (let i = steps.length - 1; i >= 0; i--) {
+    if (/出口/.test(steps[i].navigationInstruction?.instructions || '')) {
+      const ll = steps[i].startLocation?.latLng;
+      if (ll) return { lat: ll.latitude, lng: ll.longitude };
+    }
+  }
+  // 3rd: last RAMP_*/OFF_RAMP step
+  for (let i = steps.length - 1; i >= 0; i--) {
+    if (/^(RAMP|OFF_RAMP)/.test(steps[i].navigationInstruction?.maneuver || '')) {
+      const ll = steps[i].startLocation?.latLng;
+      if (ll) return { lat: ll.latitude, lng: ll.longitude };
+    }
+  }
+  return null;
 }
 
 // Strip "首都高速○○号X線" / "首都高速" prefix and IC-style suffix to get the bare
@@ -474,7 +487,7 @@ function getPlacesService() {
 // Result must look like an actual highway entrance/exit, not a parking lot / shop / office
 // that happens to end in "IC" or contain "出口".
 function isLikelyHighwayRamp(name) {
-  if (/(駐車場|パーキング|ガレージ|駐輪|ホテル|レストラン|カフェ|店舗|店$|タワー|ビル$|マンション|アパート|ガソリン|スタンド|医院|クリニック|病院|薬局|郵便|銀行|駅$|㈱|（株）|\(株\)|株式会社|有限会社|分室|出張所|事務所|建設局|庁$|区役所|市役所|学校|大学|高校|中学|小学|寺$|神社|公園|博物館|美術館|会館|桟橋|船着|運動場|広場|車寄せ|車庫)/.test(name)) return false;
+  if (/(駐車場|パーキング|ガレージ|駐輪|ホテル|レストラン|カフェ|店舗|店$|タワー|ビル$|マンション|アパート|ガソリン|スタンド|医院|クリニック|病院|薬局|郵便|銀行|駅$|㈱|（株）|\(株\)|株式会社|有限会社|分室|出張所|事務所|建設局|庁$|区役所|市役所|学校|大学|高校|中学|小学|寺$|神社|公園|博物館|美術館|会館|桟橋|船着|運動場|広場|車寄せ|車庫|プラザ|センター|福祉|体育館|保育園|児童館|図書館|文化|ホール|スタジオ|集会所|工場|倉庫|物流)/.test(name)) return false;
   if (/^(首都高速|阪神高速|名古屋高速|広島高速|福岡高速|本州四国連絡高速)/.test(name)) return true;
   if (/[一-龯ぁ-んァ-ヶー](IC|JCT)$/.test(name)) return true;
   if (/[一-龯ぁ-んァ-ヶー](ランプ|入口|出口|入出口|出入口|料金所)$/.test(name)) return true;
