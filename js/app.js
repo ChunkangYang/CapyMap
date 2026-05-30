@@ -462,13 +462,19 @@ function getPlacesService() {
   return _placesService;
 }
 
-// Places returns many short-named POIs (parks, schools, parking lots) that structurally
-// look like an IC name. To avoid those false positives in the geocoding fallback we accept
-// ONLY places explicitly tagged with a major tollway operator prefix, e.g.
-// "首都高速銀座入口". Real NEXCO ICs like "厚木IC" are already extracted from text and
-// never reach this filter.
+// Filter Places nearbySearch results to actual highway ramps/ICs. Accepts:
+//  (a) Urban tollway operator prefix: "首都高速○○入口" etc.
+//  (b) Plain NEXCO IC name: "戸田南IC", "厚木IC" — 2-8 kanji/kana + IC/ランプ suffix.
+// We had to widen this beyond (a) because Google instructions often omit the entry IC
+// name entirely (only mention downstream JCT/方面 landmarks), so text extraction picks
+// JCT and Places must supply the real NEXCO IC name from the maneuver coordinate.
+// rankBy DISTANCE keeps false positives down — the first IC-suffixed place at the
+// ramp's exact coord is essentially always the real IC.
 function isLikelyHighwayRamp(name) {
-  return /^(首都高速|阪神高速|名古屋高速|広島高速|福岡高速|本州四国連絡高速)[一-龯ぁ-んァ-ヶー\d０-９号線]{0,10}?(入口|出口|入出口|出入口|ランプ|IC|JCT|料金所|本線料金所)$/.test(name);
+  if (/^(首都高速|阪神高速|名古屋高速|広島高速|福岡高速|本州四国連絡高速)[一-龯ぁ-んァ-ヶー\d０-９号線]{0,10}?(入口|出口|入出口|出入口|ランプ|IC|JCT|料金所|本線料金所)$/.test(name)) return true;
+  // NEXCO/その他 plain pattern. Require 2-8 char prefix to reject 1-char POI names.
+  if (/^[一-龯ぁ-んァ-ヶー]{2,8}(IC|ランプ)$/.test(name)) return true;
+  return false;
 }
 
 // Find the nearest highway ramp/IC by name around coord. We use rankBy DISTANCE because
@@ -500,11 +506,13 @@ function findRampNameAt(coord, isEntry) {
     .then(r => r || tryKeyword('ランプ'));
 }
 
-// A "clean" IC name ends in IC/ランプ/JCT/本線料金所. Anything else (raw kanji prefix,
-// 出口/入口 fragment) means text extraction failed and we should fall back to a Places
-// nearbySearch at the maneuver coordinate.
+// A "clean" IC name ends in IC/ランプ/本線料金所. JCT is deliberately EXCLUDED — JCTs
+// are highway-to-highway interconnects, never an entry/exit point. If text extraction
+// only produced a JCT name (because Google's instruction only mentioned a downstream
+// JCT landmark, not the actual entry IC), fall through to a Places nearbySearch at
+// the maneuver coordinate to find the real IC.
 function isCleanICName(name) {
-  return /(IC|ランプ|JCT|本線料金所)$/.test(name || '');
+  return /(IC|ランプ|本線料金所)$/.test(name || '');
 }
 
 async function enrichRouteICs(route) {
