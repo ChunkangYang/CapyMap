@@ -234,8 +234,15 @@ async function searchRoutes() {
     window._lastRoutes = routes;
     selectedRouteIndex = 0;
     drawRoutes(routes, 0);
+    // First-pass render so user sees the route immediately; ic labels filled by enrichment.
     renderRouteCards(routes, avoidTolls, hasEtc, vehicleType);
     UsageTracker.record();
+    // Async enrich IC names via Places when text extraction couldn't get a real IC.
+    if (!avoidTolls) {
+      Promise.all(routes.map(r => enrichRouteICs(r))).then(() => {
+        renderRouteCards(routes, avoidTolls, hasEtc, vehicleType);
+      });
+    }
   } catch(err) {
     showError(err.message || '経路の取得に失敗しました');
   } finally {
@@ -264,7 +271,7 @@ async function fetchRoutes(oCoord, dCoord, vehicleType, hasEtc, avoidTolls) {
       method:'POST',
       headers:{
         'Content-Type':'application/json',
-        'X-Goog-FieldMask':'routes.duration,routes.distanceMeters,routes.polyline.encodedPolyline,routes.travelAdvisory.tollInfo,routes.description,routes.legs.steps.navigationInstruction',
+        'X-Goog-FieldMask':'routes.duration,routes.distanceMeters,routes.polyline.encodedPolyline,routes.travelAdvisory.tollInfo,routes.description,routes.legs.steps.navigationInstruction,routes.legs.steps.startLocation,routes.legs.steps.endLocation',
       },
       body: JSON.stringify(body),
     }
@@ -394,12 +401,108 @@ function isDoraplaSearchable(name) {
   return /(IC|ランプ)$/.test(name || '');
 }
 
-function buildDoraplaUrl(entryRaw, exitRaw, entryName, exitName, vehicleType) {
-  const directOk = entryRaw && exitRaw && isDoraplaSearchable(entryName) && isDoraplaSearchable(exitName);
-  if (!directOk) {
-    // Can't deep-link to a result page reliably; send user to the search top instead.
-    return { url: 'https://www.driveplaza.com/dp/SearchTop', direct: false };
+// Locate the entry/exit coordinate from a route so we can geocode the IC name when
+// Google's text instructions don't include it (typical for 首都高 entrances).
+function getEntryCoord(route) {
+  const steps = route.legs?.[0]?.steps || [];
+  const idx = steps.findIndex(s => /^(MERGE|RAMP|ON_RAMP)/.test(s.navigationInstruction?.maneuver || ''));
+  if (idx < 0) return null;
+  const ll = steps[idx].startLocation?.latLng;
+  return ll ? { lat: ll.latitude, lng: ll.longitude } : null;
+}
+function getExitCoord(route) {
+  const steps = route.legs?.[0]?.steps || [];
+  let idx = -1;
+  for (let i = steps.length - 1; i >= 0; i--) {
+    if (/出口/.test(steps[i].navigationInstruction?.instructions || '')) { idx = i; break; }
   }
+  if (idx < 0) {
+    for (let i = steps.length - 1; i >= 0; i--) {
+      if (/^(RAMP|OFF_RAMP)/.test(steps[i].navigationInstruction?.maneuver || '')) { idx = i; break; }
+    }
+  }
+  if (idx < 0) return null;
+  const ll = steps[idx].startLocation?.latLng;
+  return ll ? { lat: ll.latitude, lng: ll.longitude } : null;
+}
+
+// Strip "首都高速○○号X線" / "首都高速" prefix and IC-style suffix to get the bare
+// place name (e.g. "首都高速銀座入口" → "銀座"). This is what ドラぷら expects.
+function parseRampName(placeName) {
+  let raw = placeName
+    .replace(/^首都高速[\d０-９]*号?[一-龯ぁ-んァ-ヶー]*線?/, '')
+    .replace(/^首都高速/, '')
+    .replace(/^阪神高速[\d０-９]*号?[一-龯ぁ-んァ-ヶー]*線?/, '')
+    .replace(/^阪神高速/, '')
+    .replace(/^名古屋高速[\d０-９]*号?[一-龯ぁ-んァ-ヶー]*線?/, '')
+    .replace(/^名古屋高速/, '');
+  let suffix = 'IC';
+  if (/ランプ$/.test(placeName)) suffix = 'ランプ';
+  else if (/JCT$/.test(placeName)) suffix = 'JCT';
+  raw = raw.replace(/(入口|出口|IC|ランプ|JCT|入出口|出入口)$/, '');
+  raw = raw.trim();
+  if (!raw) return null;
+  return { name: raw + suffix, raw };
+}
+
+let _placesService = null;
+function getPlacesService() {
+  if (_placesService) return _placesService;
+  if (!map) return null;
+  _placesService = new google.maps.places.PlacesService(map);
+  return _placesService;
+}
+
+function findRampNameAt(coord) {
+  const ps = getPlacesService();
+  if (!ps || !coord) return Promise.resolve(null);
+  const tryKeyword = (kw, radius) => new Promise(resolve => {
+    ps.nearbySearch({ location: coord, radius, keyword: kw }, (results, status) => {
+      if (status !== google.maps.places.PlacesServiceStatus.OK || !results) return resolve(null);
+      const cands = results
+        .filter(r => /(入口|出口|入出口|出入口|IC|ランプ|JCT)/.test(r.name))
+        .map(r => {
+          const lat = r.geometry.location.lat();
+          const lng = r.geometry.location.lng();
+          return { name: r.name, dist: Math.hypot(lat - coord.lat, lng - coord.lng) };
+        })
+        .sort((a, b) => a.dist - b.dist);
+      if (!cands.length) return resolve(null);
+      resolve(parseRampName(cands[0].name));
+    });
+  });
+  // Try in order: 首都高速 → 高速 → IC
+  return tryKeyword('首都高速', 1200)
+    .then(r => r || tryKeyword('高速道路', 1500))
+    .then(r => r || tryKeyword('IC', 1500));
+}
+
+async function enrichRouteICs(route) {
+  const ics = extractHighwayICs(route);
+  // If entry isn't usable in ドラぷら, geocode the entry coord
+  if (!isDoraplaSearchable(ics.entryIC)) {
+    const ec = getEntryCoord(route);
+    if (ec) {
+      const found = await findRampNameAt(ec);
+      if (found) { ics.entryIC = found.name; ics.entryRaw = found.raw; }
+    }
+  }
+  if (!isDoraplaSearchable(ics.exitIC)) {
+    const xc = getExitCoord(route);
+    if (xc) {
+      const found = await findRampNameAt(xc);
+      if (found) { ics.exitIC = found.name; ics.exitRaw = found.raw; }
+    }
+  }
+  route._ics = ics;
+  return ics;
+}
+
+// Only return a URL when we can deep-link to a real result page. Never link to a form
+// the user would need to fill in — that violates the project's "no manual input" rule.
+function buildDoraplaUrl(entryRaw, exitRaw, entryName, exitName, vehicleType) {
+  if (!entryRaw || !exitRaw) return null;
+  if (!isDoraplaSearchable(entryName) || !isDoraplaSearchable(exitName)) return null;
   const carType = DORAPLA_CAR[vehicleType] || 1;
   const q = new URLSearchParams({
     startPlaceKana:  entryRaw,
@@ -408,7 +511,7 @@ function buildDoraplaUrl(entryRaw, exitRaw, entryName, exitName, vehicleType) {
     priority: '3',
     kind: '1',
   });
-  return { url: `https://www.driveplaza.com/dp/SearchQuick?${q.toString()}`, direct: true };
+  return `https://www.driveplaza.com/dp/SearchQuick?${q.toString()}`;
 }
 // ─────────────────────────────────────────────────────────────
 
@@ -447,19 +550,18 @@ function renderRouteCards(routes, avoidTolls, hasEtc, vehicleType) {
     const color = ROUTE_COLORS[i] || '#607d8b';
 
     // IC extraction for third-party toll verification reference
-    const { entryIC, exitIC, entryRaw, exitRaw } = extractHighwayICs(route);
+    const { entryIC, exitIC, entryRaw, exitRaw } = route._ics || extractHighwayICs(route);
     const icLabel = entryIC && exitIC
       ? `${entryIC} → ${exitIC}`
       : (entryIC || exitIC || '');
     const gmapsUrl = buildGoogleMapsUrl();
-    const dora = !avoidTolls ? buildDoraplaUrl(entryRaw, exitRaw, entryIC, exitIC, vehicleType) : null;
-    const doraText = dora?.direct ? '💴 ドラぷら料金' : '💴 ドラぷら（手動入力）';
-    const verifyHtml = (gmapsUrl || dora)
+    const doraUrl  = !avoidTolls ? buildDoraplaUrl(entryRaw, exitRaw, entryIC, exitIC, vehicleType) : null;
+    const verifyHtml = (gmapsUrl || doraUrl)
       ? `<div class="verify-row" onclick="event.stopPropagation()">
            ${icLabel ? `<span class="ic-label">📍 ${icLabel}</span>` : ''}
            <div class="verify-links">
              ${gmapsUrl ? `<a class="verify-link" href="${gmapsUrl}" target="_blank" rel="noopener">🗺️ Googleマップ</a>` : ''}
-             ${dora ? `<a class="verify-link" href="${dora.url}" target="_blank" rel="noopener">${doraText}</a>` : ''}
+             ${doraUrl ? `<a class="verify-link" href="${doraUrl}" target="_blank" rel="noopener">💴 ドラぷら料金</a>` : ''}
            </div>
          </div>`
       : '';
