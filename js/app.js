@@ -142,7 +142,7 @@ window.initMap = function() {
     document.getElementById('etc-text').textContent = this.checked ? 'あり' : 'なし';
   });
   document.getElementById('avoid-tolls').addEventListener('change', function() {
-    document.getElementById('avoid-text').textContent = this.checked ? '回避' : '使用';
+    document.getElementById('avoid-text').textContent = this.checked ? 'ON' : 'OFF';
   });
   ['origin','destination'].forEach(id => {
     document.getElementById(id).addEventListener('keydown', e => { if(e.key==='Enter') searchRoutes(); });
@@ -215,7 +215,7 @@ async function searchRoutes() {
   hideError();
   document.getElementById('result-panel').style.display = 'none';
 
-  const avoidTolls  = document.getElementById('avoid-tolls').checked;
+  const avoidTolls  = !document.getElementById('avoid-tolls').checked; // ON=使用有料道路, OFF=回避
   const hasEtc      = document.getElementById('has-etc').checked;
   const vehicleType = document.getElementById('vehicle-type').value;
 
@@ -292,15 +292,19 @@ const DORA_CAR_TYPE = { '普通車':1, '軽自動車':2, '中型車':3, '大型�
 
 function extractHighwayICs(route) {
   const steps = route.legs?.[0]?.steps || [];
-  // Match IC / JCT names: Japanese chars + IC or JCT suffix
-  const icRe = /([ぁ-鿿\w]{1,12}(?:IC|JCT))/;
-  const ics = [];
+  // Match IC / JCT / ランプ names: Japanese chars + suffix
+  const icRe = /([ぁ-鿿\w]{1,12}(?:IC|JCT|ランプ))/;
+  const allICs = [];
   for (const step of steps) {
     const instr = step.navigationInstruction?.instructions || '';
     const m = instr.match(icRe);
-    if (m && !ics.includes(m[1])) ics.push(m[1]);
+    if (m && !allICs.includes(m[1])) allICs.push(m[1]);
   }
-  return { entryIC: ics[0] || null, exitIC: ics[ics.length - 1] || null };
+  // Prefer IC/ランプ as entry/exit points; JCT are intermediate junctions
+  const entryExits = allICs.filter(ic => ic.endsWith('IC') || ic.endsWith('ランプ'));
+  const entryIC = entryExits[0] || allICs[0] || null;
+  const exitIC  = entryExits[entryExits.length - 1] || allICs[allICs.length - 1] || null;
+  return { entryIC, exitIC };
 }
 
 function buildVerifyUrl() {
