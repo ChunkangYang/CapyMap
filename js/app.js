@@ -346,12 +346,15 @@ function extractHighwayICs(route) {
     if (!exitCands.length  && all.length) exitCands  = [all[all.length - 1]];
   }
 
-  const prefer = arr => {
-    const ic = arr.find(m => /(IC|ランプ|本線料金所)$/.test(m.name));
-    return ic || arr[0] || null;
+  const preferFirst = arr => arr.find(m => /(IC|ランプ|本線料金所)$/.test(m.name)) || arr[0] || null;
+  const preferLast  = arr => {
+    for (let i = arr.length - 1; i >= 0; i--) {
+      if (/(IC|ランプ|本線料金所)$/.test(arr[i].name)) return arr[i];
+    }
+    return arr[arr.length - 1] || null;
   };
-  const entry = prefer(entryCands);
-  const exit  = prefer(exitCands);
+  const entry = preferFirst(entryCands);
+  const exit  = preferLast(exitCands);
   return {
     entryIC:  entry?.name || null,
     exitIC:   exit?.name  || null,
