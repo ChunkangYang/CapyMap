@@ -407,21 +407,19 @@ function isDoraplaSearchable(name) {
 
 // Locate the entry/exit coordinate from a route so we can geocode the IC name when
 // Google's text instructions don't include it (typical for 首都高 entrances).
-// Use the MERGE step's startLocation if available - it sits at the ramp/highway junction,
-// where the actual IC is. Falls back to the first RAMP step's endLocation.
+// The FIRST RAMP / ON_RAMP / MERGE step is where the route first enters the highway.
+// Later MERGE steps happen when re-joining a different toll road mid-route — those are
+// not the route's entry IC.
 function getEntryCoord(route) {
   const steps = route.legs?.[0]?.steps || [];
-  const mergeIdx = steps.findIndex(s => s.navigationInstruction?.maneuver === 'MERGE');
-  if (mergeIdx >= 0) {
-    const ll = steps[mergeIdx].startLocation?.latLng;
-    if (ll) return { lat: ll.latitude, lng: ll.longitude };
-  }
-  const rampIdx = steps.findIndex(s => /^(RAMP|ON_RAMP)/.test(s.navigationInstruction?.maneuver || ''));
-  if (rampIdx >= 0) {
-    const ll = steps[rampIdx].endLocation?.latLng;
-    if (ll) return { lat: ll.latitude, lng: ll.longitude };
-  }
-  return null;
+  const idx = steps.findIndex(s => /^(MERGE|RAMP|ON_RAMP)/.test(s.navigationInstruction?.maneuver || ''));
+  if (idx < 0) return null;
+  const mv = steps[idx].navigationInstruction?.maneuver;
+  // For RAMP/ON_RAMP, endLocation is where the ramp meets the highway (the IC).
+  // For MERGE, startLocation already sits at the highway junction.
+  const useEnd = /^(RAMP|ON_RAMP)/.test(mv);
+  const ll = (useEnd ? steps[idx].endLocation : steps[idx].startLocation)?.latLng;
+  return ll ? { lat: ll.latitude, lng: ll.longitude } : null;
 }
 // Exit coord: the LAST step containing "出口" — its startLocation is on the highway
 // right before leaving it, which is where the exit IC sits.
