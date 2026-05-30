@@ -457,6 +457,8 @@ function parseRampName(placeName) {
   raw = raw.replace(/(入口|出口|IC|ランプ|JCT|入出口|出入口)$/, '');
   raw = raw.trim();
   if (!raw) return null;
+  // Real Japanese highway IC names are single tokens — reject anything with whitespace.
+  if (/[\s　]/.test(raw)) return null;
   return { name: raw + suffix, raw };
 }
 
@@ -471,7 +473,7 @@ function getPlacesService() {
 // Result must look like an actual highway entrance/exit, not a parking lot / shop / office
 // that happens to end in "IC" or contain "出口".
 function isLikelyHighwayRamp(name) {
-  if (/(駐車場|ホテル|レストラン|カフェ|店舗|店$|タワー|ビル$|マンション|アパート|ガソリン|スタンド|医院|クリニック|病院|薬局|郵便|銀行|駅$|㈱|（株）|\(株\)|株式会社|有限会社|分室|出張所|事務所|建設局|庁$|区役所|市役所|学校|大学|高校|中学|小学|寺$|神社|公園$|博物館|美術館)/.test(name)) return false;
+  if (/(駐車場|パーキング|ガレージ|駐輪|ホテル|レストラン|カフェ|店舗|店$|タワー|ビル$|マンション|アパート|ガソリン|スタンド|医院|クリニック|病院|薬局|郵便|銀行|駅$|㈱|（株）|\(株\)|株式会社|有限会社|分室|出張所|事務所|建設局|庁$|区役所|市役所|学校|大学|高校|中学|小学|寺$|神社|公園|博物館|美術館|会館|桟橋|船着|運動場|広場|車寄せ|車庫)/.test(name)) return false;
   if (/^(首都高速|阪神高速|名古屋高速|広島高速|福岡高速|本州四国連絡高速)/.test(name)) return true;
   if (/[一-龯ぁ-んァ-ヶー](IC|JCT)$/.test(name)) return true;
   if (/[一-龯ぁ-んァ-ヶー](ランプ|入口|出口|入出口|出入口|料金所)$/.test(name)) return true;
