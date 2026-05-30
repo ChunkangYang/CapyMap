@@ -264,7 +264,7 @@ async function fetchRoutes(oCoord, dCoord, vehicleType, hasEtc, avoidTolls) {
       method:'POST',
       headers:{
         'Content-Type':'application/json',
-        'X-Goog-FieldMask':'routes.duration,routes.distanceMeters,routes.polyline.encodedPolyline,routes.travelAdvisory.tollInfo,routes.description,routes.legs.steps.navigationInstruction.instructions',
+        'X-Goog-FieldMask':'routes.duration,routes.distanceMeters,routes.polyline.encodedPolyline,routes.travelAdvisory.tollInfo,routes.description,routes.legs.steps.navigationInstruction',
       },
       body: JSON.stringify(body),
     }
@@ -292,30 +292,68 @@ const DORA_CAR_TYPE = { '普通車':1, '軽自動車':2, '中型車':3, '大型�
 
 function extractHighwayICs(route) {
   const steps = route.legs?.[0]?.steps || [];
-  // Match XX(IC|JCT|ランプ|本線料金所); allow kanji/hiragana/katakana/digits/latin in prefix.
-  const icRe = /([一-龯ぁ-んァ-ヶーA-Za-z0-9々]{1,10})(IC|JCT|ランプ|本線料金所)/g;
-  // Reject noise tokens that come from directional phrases (e.g. "○○方面のランプ").
-  const NOISE = ['方面', '出口', '入口', '本線', '高速', '方向'];
+  // Allow kanji/hiragana/katakana/digits/latin; suffix list includes 出口/入口 (will be normalized to IC).
+  const icRe = /([一-龯ぁ-んァ-ヶーA-Za-z0-9々]{1,10})(IC|JCT|ランプ|本線料金所|出口|入口)/g;
+  // Reject noise prefixes that come from directional/turn phrases.
+  const NOISE = ['方面', '本線', '高速', '方向', '右側', '左側', '右折', '左折', '直進'];
   const isNoise = name => NOISE.some(n => name.includes(n));
 
-  const allICs = [];
-  for (const step of steps) {
-    const instr = step.navigationInstruction?.instructions || '';
+  function extractFromStep(step) {
+    const txt = step?.navigationInstruction?.instructions || '';
+    const out = [];
     let m;
     icRe.lastIndex = 0;
-    while ((m = icRe.exec(instr)) !== null) {
-      const prefix = m[1];
-      const suffix = m[2];
+    while ((m = icRe.exec(txt)) !== null) {
+      const prefix = m[1], suffix = m[2];
       if (isNoise(prefix)) continue;
-      const name = prefix + suffix;
-      if (!allICs.includes(name)) allICs.push(name);
+      // Normalize 出口/入口 to IC for display consistency
+      const dispSuffix = (suffix === '出口' || suffix === '入口') ? 'IC' : suffix;
+      out.push({ name: prefix + dispSuffix, raw: prefix });
     }
+    return out;
   }
-  // Prefer IC/ランプ as entry/exit points; JCT are intermediate junctions
-  const entryExits = allICs.filter(ic => /(?:IC|ランプ|本線料金所)$/.test(ic));
-  const entryIC = entryExits[0] || allICs[0] || null;
-  const exitIC  = entryExits[entryExits.length - 1] || allICs[allICs.length - 1] || null;
-  return { entryIC, exitIC };
+
+  // Locate entry/exit by maneuver enum
+  const isOnRamp  = mv => /^(MERGE|ON_RAMP)/.test(mv || '');
+  const isOffRamp = mv => /^OFF_RAMP/.test(mv || '');
+  const onRampIdx = steps.findIndex(s => isOnRamp(s.navigationInstruction?.maneuver));
+  let offRampIdx = -1;
+  for (let i = steps.length - 1; i >= 0; i--) {
+    if (isOffRamp(steps[i].navigationInstruction?.maneuver)) { offRampIdx = i; break; }
+  }
+
+  const collectAround = (idx, before, after) => {
+    const out = [];
+    if (idx < 0) return out;
+    for (let i = Math.max(0, idx - before); i <= Math.min(steps.length - 1, idx + after); i++) {
+      out.push(...extractFromStep(steps[i]));
+    }
+    return out;
+  };
+
+  let entryCands = collectAround(onRampIdx,  1, 2);
+  let exitCands  = collectAround(offRampIdx, 2, 1);
+
+  // Fallback: full sweep
+  if (!entryCands.length || !exitCands.length) {
+    const all = [];
+    steps.forEach(s => all.push(...extractFromStep(s)));
+    if (!entryCands.length && all.length) entryCands = [all[0]];
+    if (!exitCands.length  && all.length) exitCands  = [all[all.length - 1]];
+  }
+
+  const prefer = arr => {
+    const ic = arr.find(m => /(IC|ランプ|本線料金所)$/.test(m.name));
+    return ic || arr[0] || null;
+  };
+  const entry = prefer(entryCands);
+  const exit  = prefer(exitCands);
+  return {
+    entryIC:  entry?.name || null,
+    exitIC:   exit?.name  || null,
+    entryRaw: entry?.raw  || null,
+    exitRaw:  exit?.raw   || null,
+  };
 }
 
 function buildGoogleMapsUrl() {
@@ -325,9 +363,20 @@ function buildGoogleMapsUrl() {
   return `https://www.google.com/maps/dir/?api=1&origin=${o}&destination=${d}&travelmode=driving`;
 }
 
-function buildDoraplaUrl() {
-  // ドラぷら search top - user manually enters IC names shown in the card.
-  return 'https://www.driveplaza.com/dp/SearchTop';
+// carType: 1=普通車 2=軽 3=中型 4=大型 5=特大
+const DORAPLA_CAR = { '普通車':1, '軽自動車':2, '中型車':3, '大型車':4, '特大車':5 };
+
+function buildDoraplaUrl(entryRaw, exitRaw, vehicleType) {
+  if (!entryRaw || !exitRaw) return null;
+  const carType = DORAPLA_CAR[vehicleType] || 1;
+  const q = new URLSearchParams({
+    startPlaceKana:  entryRaw,
+    arrivePlaceKana: exitRaw,
+    carType: String(carType),
+    priority: '3',
+    kind: '1',
+  });
+  return `https://www.driveplaza.com/dp/SearchQuick?${q.toString()}`;
 }
 // ─────────────────────────────────────────────────────────────
 
@@ -366,18 +415,18 @@ function renderRouteCards(routes, avoidTolls, hasEtc, vehicleType) {
     const color = ROUTE_COLORS[i] || '#607d8b';
 
     // IC extraction for third-party toll verification reference
-    const { entryIC, exitIC } = extractHighwayICs(route);
-    const icLabel = entryIC && exitIC && entryIC !== exitIC
+    const { entryIC, exitIC, entryRaw, exitRaw } = extractHighwayICs(route);
+    const icLabel = entryIC && exitIC
       ? `${entryIC} → ${exitIC}`
-      : (entryIC || '');
+      : (entryIC || exitIC || '');
     const gmapsUrl = buildGoogleMapsUrl();
-    const doraUrl  = !avoidTolls ? buildDoraplaUrl() : null;
+    const doraUrl  = !avoidTolls ? buildDoraplaUrl(entryRaw, exitRaw, vehicleType) : null;
     const verifyHtml = (gmapsUrl || doraUrl)
       ? `<div class="verify-row" onclick="event.stopPropagation()">
            ${icLabel ? `<span class="ic-label">📍 ${icLabel}</span>` : ''}
            <div class="verify-links">
-             ${gmapsUrl ? `<a class="verify-link" href="${gmapsUrl}" target="_blank" rel="noopener">🗺️ Googleマップで経路</a>` : ''}
-             ${doraUrl ? `<a class="verify-link" href="${doraUrl}" target="_blank" rel="noopener">💴 ドラぷらで料金検証</a>` : ''}
+             ${gmapsUrl ? `<a class="verify-link" href="${gmapsUrl}" target="_blank" rel="noopener">🗺️ Googleマップ</a>` : ''}
+             ${doraUrl ? `<a class="verify-link" href="${doraUrl}" target="_blank" rel="noopener">💴 ドラぷら料金</a>` : ''}
            </div>
          </div>`
       : '';
