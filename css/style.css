@@ -476,6 +476,13 @@ header .subtitle {
   padding-top: 7px;
   border-top: 1px dashed var(--border);
   gap: 6px;
+  flex-wrap: wrap;
+}
+
+.verify-links {
+  display: flex;
+  gap: 10px;
+  flex-shrink: 0;
 }
 
 .ic-label {

@@ -292,26 +292,42 @@ const DORA_CAR_TYPE = { '普通車':1, '軽自動車':2, '中型車':3, '大型�
 
 function extractHighwayICs(route) {
   const steps = route.legs?.[0]?.steps || [];
-  // Match IC / JCT / ランプ names: Japanese chars + suffix
-  const icRe = /([ぁ-鿿\w]{1,12}(?:IC|JCT|ランプ))/;
+  // Match XX(IC|JCT|ランプ|本線料金所); allow kanji/hiragana/katakana/digits/latin in prefix.
+  const icRe = /([一-龯ぁ-んァ-ヶーA-Za-z0-9々]{1,10})(IC|JCT|ランプ|本線料金所)/g;
+  // Reject noise tokens that come from directional phrases (e.g. "○○方面のランプ").
+  const NOISE = ['方面', '出口', '入口', '本線', '高速', '方向'];
+  const isNoise = name => NOISE.some(n => name.includes(n));
+
   const allICs = [];
   for (const step of steps) {
     const instr = step.navigationInstruction?.instructions || '';
-    const m = instr.match(icRe);
-    if (m && !allICs.includes(m[1])) allICs.push(m[1]);
+    let m;
+    icRe.lastIndex = 0;
+    while ((m = icRe.exec(instr)) !== null) {
+      const prefix = m[1];
+      const suffix = m[2];
+      if (isNoise(prefix)) continue;
+      const name = prefix + suffix;
+      if (!allICs.includes(name)) allICs.push(name);
+    }
   }
   // Prefer IC/ランプ as entry/exit points; JCT are intermediate junctions
-  const entryExits = allICs.filter(ic => ic.endsWith('IC') || ic.endsWith('ランプ'));
+  const entryExits = allICs.filter(ic => /(?:IC|ランプ|本線料金所)$/.test(ic));
   const entryIC = entryExits[0] || allICs[0] || null;
   const exitIC  = entryExits[entryExits.length - 1] || allICs[allICs.length - 1] || null;
   return { entryIC, exitIC };
 }
 
-function buildVerifyUrl() {
-  if (lastOriginText && lastDestText) {
-    return `https://map.yahoo.co.jp/route/car?from=${encodeURIComponent(lastOriginText)}&to=${encodeURIComponent(lastDestText)}`;
-  }
-  return null;
+function buildGoogleMapsUrl() {
+  if (!lastOriginCoord || !lastDestCoord) return null;
+  const o = `${lastOriginCoord.lat()},${lastOriginCoord.lng()}`;
+  const d = `${lastDestCoord.lat()},${lastDestCoord.lng()}`;
+  return `https://www.google.com/maps/dir/?api=1&origin=${o}&destination=${d}&travelmode=driving`;
+}
+
+function buildDoraplaUrl() {
+  // ドラぷら search top - user manually enters IC names shown in the card.
+  return 'https://www.driveplaza.com/dp/SearchTop';
 }
 // ─────────────────────────────────────────────────────────────
 
@@ -349,16 +365,20 @@ function renderRouteCards(routes, avoidTolls, hasEtc, vehicleType) {
 
     const color = ROUTE_COLORS[i] || '#607d8b';
 
-    // IC extraction for reference label
+    // IC extraction for third-party toll verification reference
     const { entryIC, exitIC } = extractHighwayICs(route);
     const icLabel = entryIC && exitIC && entryIC !== exitIC
       ? `${entryIC} → ${exitIC}`
       : (entryIC || '');
-    const verifyUrl = !avoidTolls ? buildVerifyUrl() : null;
-    const verifyHtml = verifyUrl
+    const gmapsUrl = buildGoogleMapsUrl();
+    const doraUrl  = !avoidTolls ? buildDoraplaUrl() : null;
+    const verifyHtml = (gmapsUrl || doraUrl)
       ? `<div class="verify-row" onclick="event.stopPropagation()">
            ${icLabel ? `<span class="ic-label">📍 ${icLabel}</span>` : ''}
-           <a class="verify-link" href="${verifyUrl}" target="_blank" rel="noopener">🗺️ Yahoo!マップで確認</a>
+           <div class="verify-links">
+             ${gmapsUrl ? `<a class="verify-link" href="${gmapsUrl}" target="_blank" rel="noopener">🗺️ Googleマップで経路</a>` : ''}
+             ${doraUrl ? `<a class="verify-link" href="${doraUrl}" target="_blank" rel="noopener">💴 ドラぷらで料金検証</a>` : ''}
+           </div>
          </div>`
       : '';
 
