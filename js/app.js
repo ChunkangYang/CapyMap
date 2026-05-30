@@ -234,10 +234,11 @@ async function searchRoutes() {
     window._lastRoutes = routes;
     selectedRouteIndex = 0;
     drawRoutes(routes, 0);
-    // First-pass render so user sees the route immediately; ic labels filled by enrichment.
+    // Resolve city names from coords if user input lacks a parseable city (e.g. landmark).
+    window._originPlace = extractPlaceName(originVal) || await geocodeCityName({ lat: oCoord.lat(), lng: oCoord.lng() });
+    window._destPlace   = extractPlaceName(destVal)   || await geocodeCityName({ lat: dCoord.lat(), lng: dCoord.lng() });
     renderRouteCards(routes, avoidTolls, hasEtc, vehicleType);
     UsageTracker.record();
-    // Async enrich IC names via Places when text extraction couldn't get a real IC.
     if (!avoidTolls) {
       Promise.all(routes.map(r => enrichRouteICs(r))).then(() => {
         renderRouteCards(routes, avoidTolls, hasEtc, vehicleType);
@@ -543,35 +544,23 @@ async function enrichRouteICs(route) {
   return ics;
 }
 
-// Build ドラぷら URL. Strategy:
-//  1. Best path: real IC names from text extraction (kind=1, IC-name search)
-//  2. Fallback: city/place names from origin/destination (kind=2, place-name search) —
-//     ドラぷら finds nearest IC automatically. Works for any trip without manual input.
+// Build ドラぷら URL using kind=2 (place-name search). For each end we prefer the
+// route's actual IC name (so ドラぷら resolves to the same IC the user is driving through);
+// otherwise fall back to the origin/destination city. kind=2 accepts both — for an IC
+// name it picks that IC, for a city it picks the nearest IC. Works without user input.
 function buildDoraplaUrl(entryRaw, exitRaw, entryName, exitName, vehicleType, originPlace, destPlace) {
+  const useEntry = isDoraplaSearchable(entryName) ? entryRaw : originPlace;
+  const useExit  = isDoraplaSearchable(exitName)  ? exitRaw  : destPlace;
+  if (!useEntry || !useExit) return null;
   const carType = DORAPLA_CAR[vehicleType] || 1;
-  // Path 1: deep-link with real IC names
-  if (entryRaw && exitRaw && isDoraplaSearchable(entryName) && isDoraplaSearchable(exitName)) {
-    const q = new URLSearchParams({
-      startPlaceKana: entryRaw,
-      arrivePlaceKana: exitRaw,
-      carType: String(carType),
-      priority: '3',
-      kind: '1',
-    });
-    return `https://www.driveplaza.com/dp/SearchQuick?${q.toString()}`;
-  }
-  // Path 2: place-name search using origin/destination city
-  if (originPlace && destPlace) {
-    const q = new URLSearchParams({
-      startPlaceKana: originPlace,
-      arrivePlaceKana: destPlace,
-      carType: String(carType),
-      priority: '3',
-      kind: '2',
-    });
-    return `https://www.driveplaza.com/dp/SearchQuick?${q.toString()}`;
-  }
-  return null;
+  const q = new URLSearchParams({
+    startPlaceKana:  useEntry,
+    arrivePlaceKana: useExit,
+    carType: String(carType),
+    priority: '3',
+    kind: '2',
+  });
+  return `https://www.driveplaza.com/dp/SearchQuick?${q.toString()}`;
 }
 
 // Extract a usable city name from a free-form Japanese address. Tries city/ward suffix,
@@ -584,9 +573,26 @@ function extractPlaceName(addr) {
   if (m1) return m1[1].replace(/[市区町村]$/, '');
   // Station name: strip 駅
   if (/駅/.test(t)) return t.replace(/^.*?(都|道|府|県)/, '').replace(/駅.*$/, '');
-  // Fallback: first run of kanji/kana chars
-  const m2 = t.match(/[一-龯ぁ-んァ-ヶー]{2,6}/);
-  return m2 ? m2[0] : null;
+  return null;
+}
+
+// Reverse-geocode a coord to extract its locality (city) name. Used when the user's
+// destination is a landmark like "伊豆シャボテン公園" with no parseable city portion.
+function geocodeCityName(coord) {
+  if (!coord) return Promise.resolve(null);
+  return new Promise(resolve => {
+    new google.maps.Geocoder().geocode({ location: coord, region: 'jp' }, (results, status) => {
+      if (status !== 'OK' || !results?.length) return resolve(null);
+      for (const r of results) {
+        for (const c of r.address_components || []) {
+          if (c.types.includes('locality')) {
+            return resolve(c.long_name.replace(/[市区町村]$/, ''));
+          }
+        }
+      }
+      resolve(null);
+    });
+  });
 }
 // ─────────────────────────────────────────────────────────────
 
@@ -630,9 +636,7 @@ function renderRouteCards(routes, avoidTolls, hasEtc, vehicleType) {
       ? `${entryIC} → ${exitIC}`
       : (entryIC || exitIC || '');
     const gmapsUrl = buildGoogleMapsUrl();
-    const originPlace = extractPlaceName(lastOriginText);
-    const destPlace   = extractPlaceName(lastDestText);
-    const doraUrl  = !avoidTolls ? buildDoraplaUrl(entryRaw, exitRaw, entryIC, exitIC, vehicleType, originPlace, destPlace) : null;
+    const doraUrl  = !avoidTolls ? buildDoraplaUrl(entryRaw, exitRaw, entryIC, exitIC, vehicleType, window._originPlace, window._destPlace) : null;
     const verifyHtml = (gmapsUrl || doraUrl)
       ? `<div class="verify-row" onclick="event.stopPropagation()">
            ${icLabel ? `<span class="ic-label">📍 ${icLabel}</span>` : ''}
