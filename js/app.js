@@ -306,7 +306,9 @@ function extractHighwayICs(route) {
   const cleanTxt = (t) => (t || '')
     .replace(/(?:入口|出口)?[（(][^)）]*?交差点[)）]/g, '');
 
-  const icRe = /([一-龯ァ-ヶーA-Za-z0-9々ぁ-ん]{1,10})(IC|JCT|ランプ|本線料金所|出口|入口)/g;
+  // Non-greedy on prefix so "厚木IC出口" matches as {厚木, IC} and the regex resumes after IC,
+  // instead of greedily eating "厚木IC" + "出口" and producing a bogus "厚木ICIC".
+  const icRe = /([一-龯ァ-ヶーA-Za-z0-9々ぁ-ん]{1,10}?)(IC|JCT|ランプ|本線料金所|出口|入口)/g;
   const NOISE = ['方面', '本線', '高速', '方向', '右側', '左側', '右折', '左折', '直進', '車線'];
   const SPLIT_RE = /方面の|方面|右側の|左側の|本線|の(?=ランプ)|の(?=出口)|の(?=入口)/;
 
