@@ -484,13 +484,16 @@ function getPlacesService() {
   return _placesService;
 }
 
-// Result must look like an actual highway entrance/exit, not a parking lot / shop / office
-// that happens to end in "IC" or contain "出口".
+// Real highway entrance names are tightly structured: short prefix (≤6 Japanese chars)
+// plus a standard suffix (IC/JCT/ランプ/入口/出口/料金所). Anything else — parking lots,
+// subway exits, community centers ending in "出口" — gets rejected.
 function isLikelyHighwayRamp(name) {
-  if (/(駐車場|パーキング|ガレージ|駐輪|ホテル|レストラン|カフェ|店舗|店$|タワー|ビル$|マンション|アパート|ガソリン|スタンド|医院|クリニック|病院|薬局|郵便|銀行|駅$|㈱|（株）|\(株\)|株式会社|有限会社|分室|出張所|事務所|建設局|庁$|区役所|市役所|学校|大学|高校|中学|小学|寺$|神社|公園|博物館|美術館|会館|桟橋|船着|運動場|広場|車寄せ|車庫|プラザ|センター|福祉|体育館|保育園|児童館|図書館|文化|ホール|スタジオ|集会所|工場|倉庫|物流)/.test(name)) return false;
-  if (/^(首都高速|阪神高速|名古屋高速|広島高速|福岡高速|本州四国連絡高速)/.test(name)) return true;
-  if (/[一-龯ぁ-んァ-ヶー](IC|JCT)$/.test(name)) return true;
-  if (/[一-龯ぁ-んァ-ヶー](ランプ|入口|出口|入出口|出入口|料金所)$/.test(name)) return true;
+  // Whole-name patterns. No extra prefix/suffix text allowed.
+  // 1) Major-tollway-operator prefix (e.g. "首都高速銀座入口")
+  if (/^(首都高速|阪神高速|名古屋高速|広島高速|福岡高速|本州四国連絡高速)[一-龯ぁ-んァ-ヶー\d０-９号線]{0,10}?(入口|出口|入出口|出入口|ランプ|IC|JCT|料金所|本線料金所)$/.test(name)) return true;
+  // 2) Short standalone IC: ≤6 Japanese chars + suffix
+  if (/^[一-龯ぁ-んァ-ヶー]{1,6}(IC|JCT|ランプ|料金所|本線料金所)$/.test(name)) return true;
+  if (/^[一-龯ぁ-んァ-ヶー]{1,6}(入口|出口|入出口|出入口)$/.test(name)) return true;
   return false;
 }
 
