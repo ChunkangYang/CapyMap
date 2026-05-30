@@ -298,17 +298,21 @@ function extractHighwayICs(route) {
   const NOISE = ['方面', '本線', '高速', '方向', '右側', '左側', '右折', '左折', '直進'];
   const isNoise = name => NOISE.some(n => name.includes(n));
 
+  // Split instruction on noise markers so greedy regex can't span across "○○方面の".
+  const SPLIT_RE = /方面の|方面|右側の|左側の|本線|の(?=ランプ)/;
   function extractFromStep(step) {
     const txt = step?.navigationInstruction?.instructions || '';
+    const segments = txt.split(SPLIT_RE);
     const out = [];
-    let m;
-    icRe.lastIndex = 0;
-    while ((m = icRe.exec(txt)) !== null) {
-      const prefix = m[1], suffix = m[2];
-      if (isNoise(prefix)) continue;
-      // Normalize 出口/入口 to IC for display consistency
-      const dispSuffix = (suffix === '出口' || suffix === '入口') ? 'IC' : suffix;
-      out.push({ name: prefix + dispSuffix, raw: prefix });
+    for (const seg of segments) {
+      let m;
+      icRe.lastIndex = 0;
+      while ((m = icRe.exec(seg)) !== null) {
+        const prefix = m[1], suffix = m[2];
+        if (isNoise(prefix)) continue;
+        const dispSuffix = (suffix === '出口' || suffix === '入口') ? 'IC' : suffix;
+        out.push({ name: prefix + dispSuffix, raw: prefix });
+      }
     }
     return out;
   }
