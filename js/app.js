@@ -234,9 +234,6 @@ async function searchRoutes() {
     window._lastRoutes = routes;
     selectedRouteIndex = 0;
     drawRoutes(routes, 0);
-    // Resolve city names from coords if user input lacks a parseable city (e.g. landmark).
-    window._originPlace = extractPlaceName(originVal) || await geocodeCityName({ lat: oCoord.lat(), lng: oCoord.lng() });
-    window._destPlace   = extractPlaceName(destVal)   || await geocodeCityName({ lat: dCoord.lat(), lng: dCoord.lng() });
     renderRouteCards(routes, avoidTolls, hasEtc, vehicleType);
     UsageTracker.record();
     if (!avoidTolls) {
@@ -296,8 +293,6 @@ function geocode(address) {
 // ─────────────────────────────────────────────────────────────
 
 // ── Toll verification helpers ─────────────────────────────────
-const DORA_CAR_TYPE = { '普通車':1, '軽自動車':2, '中型車':3, '大型車':4, '特大車':5 };
-
 function extractHighwayICs(route) {
   const steps = route.legs?.[0]?.steps || [];
 
@@ -340,14 +335,19 @@ function extractHighwayICs(route) {
     return out;
   }
 
-  // Detect entry: first step with MERGE or RAMP_* maneuver (Google uses RAMP_LEFT/RAMP_RIGHT, not ON_RAMP_*)
+  // Entry: first MERGE/RAMP step (route's first highway entry).
   const entryRampIdx = steps.findIndex(s => /^(MERGE|RAMP|ON_RAMP)/.test(s.navigationInstruction?.maneuver || ''));
 
-  // Detect exit: last step whose instruction contains "出口" (cleaned)
-  let exitTextIdx = -1;
+  // Exit: last RAMP/OFF_RAMP step. Position invariant — mid-route junctions (e.g.
+  // 厚木IC where 東名→小田原厚木道路 transitions) are followed by another MERGE, so
+  // they're never the LAST RAMP. The last RAMP is where the route truly leaves the
+  // toll network. Anchoring on maneuver position (not 出口 text) avoids false picks
+  // when transition steps mention "出口".
+  let exitRampIdx = -1;
   for (let i = steps.length - 1; i >= 0; i--) {
-    if (/出口/.test(cleanTxt(steps[i].navigationInstruction?.instructions))) {
-      exitTextIdx = i;
+    const mv = steps[i].navigationInstruction?.maneuver || '';
+    if (/^(RAMP|OFF_RAMP)/.test(mv)) {
+      exitRampIdx = i;
       break;
     }
   }
@@ -362,7 +362,9 @@ function extractHighwayICs(route) {
   };
 
   let entryCands = collect(entryRampIdx, 1, 2);
-  let exitCands  = collect(exitTextIdx,  0, 0);
+  // Include next step too — IC name often appears in the step AFTER the off-ramp
+  // (e.g. "厚木ICで降りて…" pattern).
+  let exitCands  = collect(exitRampIdx,  0, 1);
 
   // Fallback: scan whole route. Use ordered position (not suffix preference) so we
   // don't pick the exit IC as the entry simply because it has "IC" suffix.
@@ -398,14 +400,6 @@ function buildGoogleMapsUrl() {
   return `https://www.google.com/maps/dir/?api=1&origin=${o}&destination=${d}&travelmode=driving`;
 }
 
-// carType: 1=普通車 2=軽 3=中型 4=大型 5=特大
-const DORAPLA_CAR = { '普通車':1, '軽自動車':2, '中型車':3, '大型車':4, '特大車':5 };
-
-// ドラぷら won't accept JCT or 本線料金所 as start/end. Only IC and ランプ work as endpoints.
-function isDoraplaSearchable(name) {
-  return /(IC|ランプ)$/.test(name || '');
-}
-
 // Locate the entry/exit coordinate from a route so we can geocode the IC name when
 // Google's text instructions don't include it (typical for 首都高 entrances).
 // The FIRST RAMP / ON_RAMP / MERGE step is where the route first enters the highway.
@@ -422,28 +416,11 @@ function getEntryCoord(route) {
   const ll = (useEnd ? steps[idx].endLocation : steps[idx].startLocation)?.latLng;
   return ll ? { lat: ll.latitude, lng: ll.longitude } : null;
 }
-// Prefer the last RAMP step that explicitly mentions "出口" — that's a real highway exit
-// ramp, not a downstream non-highway turn that also happens to mention 出口.
+// Last RAMP/OFF_RAMP step = where the route truly leaves the toll network. Mid-route
+// transitions (e.g. 厚木IC where 東名→小田原厚木道路) are followed by another MERGE
+// so they are never the "last" RAMP. Position invariant beats 出口 text matching.
 function getExitCoord(route) {
   const steps = route.legs?.[0]?.steps || [];
-  // 1st choice: last RAMP_*/OFF_RAMP with 出口 in text
-  for (let i = steps.length - 1; i >= 0; i--) {
-    const s = steps[i];
-    const mv = s.navigationInstruction?.maneuver || '';
-    const txt = s.navigationInstruction?.instructions || '';
-    if (/^(RAMP|OFF_RAMP)/.test(mv) && /出口/.test(txt)) {
-      const ll = s.startLocation?.latLng;
-      if (ll) return { lat: ll.latitude, lng: ll.longitude };
-    }
-  }
-  // 2nd: last 出口 text alone
-  for (let i = steps.length - 1; i >= 0; i--) {
-    if (/出口/.test(steps[i].navigationInstruction?.instructions || '')) {
-      const ll = steps[i].startLocation?.latLng;
-      if (ll) return { lat: ll.latitude, lng: ll.longitude };
-    }
-  }
-  // 3rd: last RAMP_*/OFF_RAMP step
   for (let i = steps.length - 1; i >= 0; i--) {
     if (/^(RAMP|OFF_RAMP)/.test(steps[i].navigationInstruction?.maneuver || '')) {
       const ll = steps[i].startLocation?.latLng;
@@ -523,17 +500,23 @@ function findRampNameAt(coord, isEntry) {
     .then(r => r || tryKeyword('ランプ'));
 }
 
+// A "clean" IC name ends in IC/ランプ/JCT/本線料金所. Anything else (raw kanji prefix,
+// 出口/入口 fragment) means text extraction failed and we should fall back to a Places
+// nearbySearch at the maneuver coordinate.
+function isCleanICName(name) {
+  return /(IC|ランプ|JCT|本線料金所)$/.test(name || '');
+}
+
 async function enrichRouteICs(route) {
   const ics = extractHighwayICs(route);
-  // If entry isn't usable in ドラぷら, geocode the entry coord
-  if (!isDoraplaSearchable(ics.entryIC)) {
+  if (!isCleanICName(ics.entryIC)) {
     const ec = getEntryCoord(route);
     if (ec) {
       const found = await findRampNameAt(ec, true);
       if (found) { ics.entryIC = found.name; ics.entryRaw = found.raw; }
     }
   }
-  if (!isDoraplaSearchable(ics.exitIC)) {
+  if (!isCleanICName(ics.exitIC)) {
     const xc = getExitCoord(route);
     if (xc) {
       const found = await findRampNameAt(xc, false);
@@ -544,56 +527,10 @@ async function enrichRouteICs(route) {
   return ics;
 }
 
-// Build ドラぷら URL using kind=2 (place-name search). For each end we prefer the
-// route's actual IC name (so ドラぷら resolves to the same IC the user is driving through);
-// otherwise fall back to the origin/destination city. kind=2 accepts both — for an IC
-// name it picks that IC, for a city it picks the nearest IC. Works without user input.
-function buildDoraplaUrl(entryRaw, exitRaw, entryName, exitName, vehicleType, originPlace, destPlace) {
-  const useEntry = isDoraplaSearchable(entryName) ? entryRaw : originPlace;
-  const useExit  = isDoraplaSearchable(exitName)  ? exitRaw  : destPlace;
-  if (!useEntry || !useExit) return null;
-  const carType = DORAPLA_CAR[vehicleType] || 1;
-  const q = new URLSearchParams({
-    startPlaceKana:  useEntry,
-    arrivePlaceKana: useExit,
-    carType: String(carType),
-    priority: '3',
-    kind: '2',
-  });
-  return `https://www.driveplaza.com/dp/SearchQuick?${q.toString()}`;
-}
-
-// Extract a usable city name from a free-form Japanese address. Tries city/ward suffix,
-// then station suffix, then a kanji-only prefix as fallback.
-function extractPlaceName(addr) {
-  if (!addr) return null;
-  const t = addr.trim();
-  // 都/道/府/県 + 市/区/町/村 → take the city portion
-  const m1 = t.match(/(?:[^都道府県]*?[都道府県])?([一-龯ぁ-んァ-ヶー]+?[市区町村])/);
-  if (m1) return m1[1].replace(/[市区町村]$/, '');
-  // Station name: strip 駅
-  if (/駅/.test(t)) return t.replace(/^.*?(都|道|府|県)/, '').replace(/駅.*$/, '');
-  return null;
-}
-
-// Reverse-geocode a coord to extract its locality (city) name. Used when the user's
-// destination is a landmark like "伊豆シャボテン公園" with no parseable city portion.
-function geocodeCityName(coord) {
-  if (!coord) return Promise.resolve(null);
-  return new Promise(resolve => {
-    new google.maps.Geocoder().geocode({ location: coord, region: 'jp' }, (results, status) => {
-      if (status !== 'OK' || !results?.length) return resolve(null);
-      for (const r of results) {
-        for (const c of r.address_components || []) {
-          if (c.types.includes('locality')) {
-            return resolve(c.long_name.replace(/[市区町村]$/, ''));
-          }
-        }
-      }
-      resolve(null);
-    });
-  });
-}
+// NEXCO ドラぷら search top — user manually inputs IC names to verify Google's toll
+// estimate. Kept as a static link (no prefill) because kind=2 deep-link cannot
+// handle multi-operator routes that span non-NEXCO toll roads.
+const NEXCO_SEARCH_URL = 'https://www.driveplaza.com/dp/SearchTop';
 // ─────────────────────────────────────────────────────────────
 
 // ── Route cards UI ────────────────────────────────────────────
@@ -630,19 +567,27 @@ function renderRouteCards(routes, avoidTolls, hasEtc, vehicleType) {
 
     const color = ROUTE_COLORS[i] || '#607d8b';
 
-    // IC extraction for third-party toll verification reference
-    const { entryIC, exitIC, entryRaw, exitRaw } = route._ics || extractHighwayICs(route);
-    const icLabel = entryIC && exitIC
-      ? `${entryIC} → ${exitIC}`
-      : (entryIC || exitIC || '');
+    // IC extraction: shown prominently so the user can manually verify Google's toll
+    // estimate by typing these IC names into NEXCO ドラぷら search.
+    const { entryIC, exitIC } = route._ics || extractHighwayICs(route);
+    const hasIC = entryIC || exitIC;
     const gmapsUrl = buildGoogleMapsUrl();
-    const doraUrl  = !avoidTolls ? buildDoraplaUrl(entryRaw, exitRaw, entryIC, exitIC, vehicleType, window._originPlace, window._destPlace) : null;
-    const verifyHtml = (gmapsUrl || doraUrl)
+    const icBlock = !avoidTolls && hasIC
+      ? `<div class="ic-block">
+           <div class="ic-block-label">高速 IC（NEXCO 検索用）</div>
+           <div class="ic-block-text">
+             <span class="ic-name">${entryIC || '?'}</span>
+             <span class="ic-arrow">→</span>
+             <span class="ic-name">${exitIC || '?'}</span>
+           </div>
+         </div>`
+      : '';
+    const verifyHtml = (gmapsUrl || icBlock)
       ? `<div class="verify-row" onclick="event.stopPropagation()">
-           ${icLabel ? `<span class="ic-label">📍 ${icLabel}</span>` : ''}
-           <div class="verify-links">
-             ${gmapsUrl ? `<a class="verify-link" href="${gmapsUrl}" target="_blank" rel="noopener">🗺️ Googleマップ</a>` : ''}
-             ${doraUrl ? `<a class="verify-link" href="${doraUrl}" target="_blank" rel="noopener">💴 ドラぷら料金</a>` : ''}
+           ${icBlock}
+           <div class="verify-actions">
+             ${gmapsUrl ? `<a class="verify-link" href="${gmapsUrl}" target="_blank" rel="noopener">🗺️ ルート</a>` : ''}
+             ${!avoidTolls ? `<a class="verify-link nexco-cta" href="${NEXCO_SEARCH_URL}" target="_blank" rel="noopener">💴 NEXCO で料金確認</a>` : ''}
            </div>
          </div>`
       : '';

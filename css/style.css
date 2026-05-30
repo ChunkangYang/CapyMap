@@ -472,26 +472,52 @@ header .subtitle {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-top: 8px;
-  padding-top: 7px;
+  margin-top: 10px;
+  padding-top: 9px;
   border-top: 1px dashed var(--border);
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.ic-block {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.ic-block-label {
+  font-size: 0.62rem;
+  color: var(--text-secondary);
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  margin-bottom: 2px;
+}
+
+.ic-block-text {
+  display: flex;
+  align-items: center;
   gap: 6px;
   flex-wrap: wrap;
 }
 
-.verify-links {
-  display: flex;
-  gap: 10px;
-  flex-shrink: 0;
+.ic-name {
+  font-size: 1.0rem;
+  font-weight: 700;
+  color: var(--text);
+  letter-spacing: 0.01em;
 }
 
-.ic-label {
-  font-size: 0.68rem;
+.ic-arrow {
+  font-size: 0.95rem;
   color: var(--text-secondary);
-  flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  font-weight: 600;
+}
+
+.verify-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex-shrink: 0;
+  align-items: flex-end;
 }
 
 .verify-link {
@@ -499,11 +525,24 @@ header .subtitle {
   color: var(--primary);
   text-decoration: none;
   white-space: nowrap;
-  flex-shrink: 0;
 }
 
 .verify-link:hover {
   text-decoration: underline;
+}
+
+.nexco-cta {
+  background: var(--toll-color);
+  color: white !important;
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-weight: 700;
+  font-size: 0.78rem;
+}
+
+.nexco-cta:hover {
+  background: #2e7d3a;
+  text-decoration: none;
 }
 
 /* Toll Detail (kept for compatibility) */
