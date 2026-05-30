@@ -407,13 +407,24 @@ function isDoraplaSearchable(name) {
 
 // Locate the entry/exit coordinate from a route so we can geocode the IC name when
 // Google's text instructions don't include it (typical for 首都高 entrances).
+// Use the MERGE step's startLocation if available - it sits at the ramp/highway junction,
+// where the actual IC is. Falls back to the first RAMP step's endLocation.
 function getEntryCoord(route) {
   const steps = route.legs?.[0]?.steps || [];
-  const idx = steps.findIndex(s => /^(MERGE|RAMP|ON_RAMP)/.test(s.navigationInstruction?.maneuver || ''));
-  if (idx < 0) return null;
-  const ll = steps[idx].startLocation?.latLng;
-  return ll ? { lat: ll.latitude, lng: ll.longitude } : null;
+  const mergeIdx = steps.findIndex(s => s.navigationInstruction?.maneuver === 'MERGE');
+  if (mergeIdx >= 0) {
+    const ll = steps[mergeIdx].startLocation?.latLng;
+    if (ll) return { lat: ll.latitude, lng: ll.longitude };
+  }
+  const rampIdx = steps.findIndex(s => /^(RAMP|ON_RAMP)/.test(s.navigationInstruction?.maneuver || ''));
+  if (rampIdx >= 0) {
+    const ll = steps[rampIdx].endLocation?.latLng;
+    if (ll) return { lat: ll.latitude, lng: ll.longitude };
+  }
+  return null;
 }
+// Exit coord: the LAST step containing "出口" — its startLocation is on the highway
+// right before leaving it, which is where the exit IC sits.
 function getExitCoord(route) {
   const steps = route.legs?.[0]?.steps || [];
   let idx = -1;
@@ -467,29 +478,33 @@ function isLikelyHighwayRamp(name) {
   return false;
 }
 
-function findRampNameAt(coord) {
+// Find the nearest highway ramp/IC by name around coord. We use rankBy DISTANCE because
+// radius-based search returns offices and shops named with "高速" etc. ahead of actual
+// 入口/出口 places. The first highway-pattern hit in distance order is the IC we want.
+function findRampNameAt(coord, isEntry) {
   const ps = getPlacesService();
   if (!ps || !coord) return Promise.resolve(null);
-  const tryKeyword = (kw, radius) => new Promise(resolve => {
-    ps.nearbySearch({ location: coord, radius, keyword: kw }, (results, status) => {
+  const tryKeyword = (kw) => new Promise(resolve => {
+    ps.nearbySearch({
+      location: coord,
+      rankBy: google.maps.places.RankBy.DISTANCE,
+      keyword: kw,
+    }, (results, status) => {
       if (status !== google.maps.places.PlacesServiceStatus.OK || !results) return resolve(null);
-      const cands = results
-        .filter(r => isLikelyHighwayRamp(r.name))
-        .map(r => {
-          const lat = r.geometry.location.lat();
-          const lng = r.geometry.location.lng();
-          return { name: r.name, dist: Math.hypot(lat - coord.lat, lng - coord.lng) };
-        })
-        .sort((a, b) => a.dist - b.dist);
-      if (!cands.length) return resolve(null);
-      const parsed = parseRampName(cands[0].name);
-      resolve(parsed && parsed.raw ? parsed : null);
+      for (const r of results) {
+        if (isLikelyHighwayRamp(r.name)) {
+          const parsed = parseRampName(r.name);
+          if (parsed?.raw) return resolve(parsed);
+        }
+      }
+      resolve(null);
     });
   });
-  return tryKeyword('首都高速', 1500)
-    .then(r => r || tryKeyword('高速道路', 1500))
-    .then(r => r || tryKeyword('インターチェンジ', 2000))
-    .then(r => r || tryKeyword('ランプ', 1500));
+  // Search for 入口/出口 first (proper highway access points), fall back to IC/ランプ.
+  const primary = isEntry ? '入口' : '出口';
+  return tryKeyword(primary)
+    .then(r => r || tryKeyword('IC'))
+    .then(r => r || tryKeyword('ランプ'));
 }
 
 async function enrichRouteICs(route) {
@@ -498,14 +513,14 @@ async function enrichRouteICs(route) {
   if (!isDoraplaSearchable(ics.entryIC)) {
     const ec = getEntryCoord(route);
     if (ec) {
-      const found = await findRampNameAt(ec);
+      const found = await findRampNameAt(ec, true);
       if (found) { ics.entryIC = found.name; ics.entryRaw = found.raw; }
     }
   }
   if (!isDoraplaSearchable(ics.exitIC)) {
     const xc = getExitCoord(route);
     if (xc) {
-      const found = await findRampNameAt(xc);
+      const found = await findRampNameAt(xc, false);
       if (found) { ics.exitIC = found.name; ics.exitRaw = found.raw; }
     }
   }
