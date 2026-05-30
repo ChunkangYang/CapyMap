@@ -308,9 +308,35 @@ function extractHighwayICs(route) {
   const NOISE = ['方面', '本線', '高速', '方向', '右側', '左側', '右折', '左折', '直進', '車線'];
   const SPLIT_RE = /方面の|方面|右側の|左側の|本線|の(?=ランプ)|の(?=出口)|の(?=入口)/;
 
-  function extractFromStep(step) {
+  // 表示 list parser. Google instructions often embed a "(A/B/C/... の表示)" block
+  // listing what's on the road signs at this point. NEXCO IC names like "戸田南"
+  // appear here as bare tokens (no IC suffix) — and this is OFTEN the only place
+  // in the entire instruction text where the actual entry IC name is mentioned.
+  // Example: "国道17号 に入る (517/首都高速５号/戸田南/首都高速都心環状線/...
+  //          東関東自動車道/コンパル/笹目コミュニティーセンター/戸田市 の表示)"
+  // → tokens: ['517','首都高速５号','戸田南','首都高速都心環状線', ...]
+  // → IC-candidate: '戸田南' (rejects highway prefixes, route numbers, city names).
+  const HWY_PREFIXES = /^(首都高速|阪神高速|名古屋高速|広島高速|福岡高速|本州四国連絡高速|東名|新東名|名神|新名神|中央|関越|東北|常磐|京葉|東関東|北陸|上信越|中国|九州|山陽|山陰|北関東|外環|圏央|湾岸|西湘|小田原厚木|首都|阪神|名古屋|広島|福岡)/;
+  function extractSignDisplayICs(rawInst) {
+    const out = [];
+    const re = /[（(]([^）)]+?)の表示[）)]/g;
+    let m;
+    while ((m = re.exec(rawInst)) !== null) {
+      const tokens = m[1].split('/').map(t => t.trim()).filter(Boolean);
+      for (const tok of tokens) {
+        if (!/^[一-龯]{2,5}$/.test(tok)) continue;       // pure kanji 2-5 chars only
+        if (/(市|区|町|村|県|府|都|線|号|館|園|寺|宮)$/.test(tok)) continue;
+        if (HWY_PREFIXES.test(tok)) continue;
+        out.push({ name: tok + 'IC', raw: tok });
+      }
+    }
+    return out;
+  }
+
+  function extractFromStep(step, includeSignList) {
+    const rawInst = step?.navigationInstruction?.instructions || '';
     // Strip whitespace so "横浜新道 出口" → "横浜新道出口" matches the prefix+suffix regex.
-    const txt = cleanTxt(step?.navigationInstruction?.instructions).replace(/[\s　]+/g, '');
+    const txt = cleanTxt(rawInst).replace(/[\s　]+/g, '');
     const segments = txt.split(SPLIT_RE);
     const out = [];
     for (const seg of segments) {
@@ -332,6 +358,13 @@ function extractHighwayICs(route) {
         out.push({ name: prefix + dispSuffix, raw: prefix });
       }
     }
+    // 表示-list candidates only included for ENTRY collection. Mid-route 表示 lists
+    // contain destination signs (e.g. "熱海市街/伊東/下田") that look like IC names
+    // but are cities further down the route, never the actual exit IC. Limiting
+    // 表示 use to the entry window prevents these from corrupting exit detection.
+    if (includeSignList) {
+      out.push(...extractSignDisplayICs(rawInst));
+    }
     return out;
   }
 
@@ -352,19 +385,21 @@ function extractHighwayICs(route) {
     }
   }
 
-  const collect = (idx, before, after) => {
+  const collect = (idx, before, after, includeSignList) => {
     if (idx < 0) return [];
     const out = [];
     for (let i = Math.max(0, idx - before); i <= Math.min(steps.length - 1, idx + after); i++) {
-      out.push(...extractFromStep(steps[i]));
+      out.push(...extractFromStep(steps[i], includeSignList));
     }
     return out;
   };
 
-  let entryCands = collect(entryRampIdx, 1, 2);
-  // Include next step too — IC name often appears in the step AFTER the off-ramp
-  // (e.g. "厚木ICで降りて…" pattern).
-  let exitCands  = collect(exitRampIdx,  0, 1);
+  // Entry collection includes 表示 list — only place NEXCO IC name (e.g. 戸田南)
+  // appears in instruction text.
+  let entryCands = collect(entryRampIdx, 1, 2, true);
+  // Exit collection: IC-suffix matches only. The step AFTER the off-ramp sometimes
+  // names the exit IC (e.g. "厚木ICで降りて…").
+  let exitCands  = collect(exitRampIdx,  0, 1, false);
 
   // Fallback: scan whole route. Use ordered position (not suffix preference) so we
   // don't pick the exit IC as the entry simply because it has "IC" suffix.
@@ -381,7 +416,9 @@ function extractHighwayICs(route) {
 
   if (!entry || !exit) {
     const all = [];
-    steps.forEach(s => all.push(...extractFromStep(s)));
+    // Fallback whole-route scan: NO 表示 list (mid-route 表示 contains downstream
+    // destinations like 熱海市街/伊東/下田 that would corrupt last-IC detection).
+    steps.forEach(s => all.push(...extractFromStep(s, false)));
     if (!entry && all.length) entry = all[0];
     if (!exit  && all.length) exit  = all[all.length - 1];
   }
