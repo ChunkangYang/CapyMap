@@ -444,13 +444,16 @@ function getExitCoord(route) {
 // Strip "首都高速○○号X線" / "首都高速" prefix and IC-style suffix to get the bare
 // place name (e.g. "首都高速銀座入口" → "銀座"). This is what ドラぷら expects.
 function parseRampName(placeName) {
-  let raw = placeName
-    .replace(/^首都高速[\d０-９]*号?[一-龯ぁ-んァ-ヶー]*線?/, '')
-    .replace(/^首都高速/, '')
-    .replace(/^阪神高速[\d０-９]*号?[一-龯ぁ-んァ-ヶー]*線?/, '')
-    .replace(/^阪神高速/, '')
-    .replace(/^名古屋高速[\d０-９]*号?[一-龯ぁ-んァ-ヶー]*線?/, '')
-    .replace(/^名古屋高速/, '');
+  // Only strip the highway-line prefix when it actually ends in 線, so "首都高速銀座入口"
+  // doesn't get its place name eaten by a greedy kanji match.
+  const stripHwy = (s, hwy) => s
+    .replace(new RegExp('^' + hwy + '[\\d０-９]+号(?:[一-龯ぁ-んァ-ヶー]+線)?'), '')
+    .replace(new RegExp('^' + hwy + '[一-龯ぁ-んァ-ヶー]+線'), '')
+    .replace(new RegExp('^' + hwy), '');
+  let raw = placeName;
+  raw = stripHwy(raw, '首都高速');
+  raw = stripHwy(raw, '阪神高速');
+  raw = stripHwy(raw, '名古屋高速');
   let suffix = 'IC';
   if (/ランプ$/.test(placeName)) suffix = 'ランプ';
   else if (/JCT$/.test(placeName)) suffix = 'JCT';
