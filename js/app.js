@@ -322,13 +322,14 @@ function extractHighwayICs(route) {
         let prefix = m[1];
         const suffix = m[2];
         if (NOISE.some(n => prefix.includes(n))) continue;
+        // Reject greedy over-matches: prefix already ending in a suffix token means
+        // the regex swallowed e.g. "厚木IC" as prefix to match "厚木IC出口".
+        if (/(IC|JCT|ランプ|本線料金所|出口|入口)$/.test(prefix)) continue;
         // Trim trailing particles from prefix
         prefix = prefix.replace(/[のをにへがでと]$/, '');
         if (!prefix) continue;
-        // Reject if it's just a single hiragana/punctuation
         if (/^[ぁ-ん]$/.test(prefix)) continue;
         const dispSuffix = (suffix === '出口' || suffix === '入口') ? 'IC' : suffix;
-        // Skip if the suffix is 出口/入口 but only generic chars precede (e.g. 単に "出口")
         if ((suffix === '出口' || suffix === '入口') && prefix.length < 2) continue;
         out.push({ name: prefix + dispSuffix, raw: prefix });
       }
@@ -454,9 +455,10 @@ function getPlacesService() {
   return _placesService;
 }
 
-// Result must look like an actual highway entrance/exit, not e.g. a parking lot named "○○ AIC".
+// Result must look like an actual highway entrance/exit, not a parking lot / shop / office
+// that happens to end in "IC" or contain "出口".
 function isLikelyHighwayRamp(name) {
-  if (/(駐車場|ホテル|レストラン|カフェ|店舗|タワー|ビル|マンション|アパート|ガソリン|スタンド|医院|クリニック|病院|薬局|郵便|銀行|駅$)/.test(name)) return false;
+  if (/(駐車場|ホテル|レストラン|カフェ|店舗|店$|タワー|ビル$|マンション|アパート|ガソリン|スタンド|医院|クリニック|病院|薬局|郵便|銀行|駅$|㈱|（株）|\(株\)|株式会社|有限会社|分室|出張所|事務所|建設局|庁$|区役所|市役所|学校|大学|高校|中学|小学|寺$|神社|公園$|博物館|美術館)/.test(name)) return false;
   if (/^(首都高速|阪神高速|名古屋高速|広島高速|福岡高速|本州四国連絡高速)/.test(name)) return true;
   if (/[一-龯ぁ-んァ-ヶー](IC|JCT)$/.test(name)) return true;
   if (/[一-龯ぁ-んァ-ヶー](ランプ|入口|出口|入出口|出入口|料金所)$/.test(name)) return true;
