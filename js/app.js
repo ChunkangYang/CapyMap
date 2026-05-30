@@ -389,8 +389,17 @@ function buildGoogleMapsUrl() {
 // carType: 1=普通車 2=軽 3=中型 4=大型 5=特大
 const DORAPLA_CAR = { '普通車':1, '軽自動車':2, '中型車':3, '大型車':4, '特大車':5 };
 
-function buildDoraplaUrl(entryRaw, exitRaw, vehicleType) {
-  if (!entryRaw || !exitRaw) return null;
+// ドラぷら won't accept JCT or 本線料金所 as start/end. Only IC and ランプ work as endpoints.
+function isDoraplaSearchable(name) {
+  return /(IC|ランプ)$/.test(name || '');
+}
+
+function buildDoraplaUrl(entryRaw, exitRaw, entryName, exitName, vehicleType) {
+  const directOk = entryRaw && exitRaw && isDoraplaSearchable(entryName) && isDoraplaSearchable(exitName);
+  if (!directOk) {
+    // Can't deep-link to a result page reliably; send user to the search top instead.
+    return { url: 'https://www.driveplaza.com/dp/SearchTop', direct: false };
+  }
   const carType = DORAPLA_CAR[vehicleType] || 1;
   const q = new URLSearchParams({
     startPlaceKana:  entryRaw,
@@ -399,7 +408,7 @@ function buildDoraplaUrl(entryRaw, exitRaw, vehicleType) {
     priority: '3',
     kind: '1',
   });
-  return `https://www.driveplaza.com/dp/SearchQuick?${q.toString()}`;
+  return { url: `https://www.driveplaza.com/dp/SearchQuick?${q.toString()}`, direct: true };
 }
 // ─────────────────────────────────────────────────────────────
 
@@ -443,13 +452,14 @@ function renderRouteCards(routes, avoidTolls, hasEtc, vehicleType) {
       ? `${entryIC} → ${exitIC}`
       : (entryIC || exitIC || '');
     const gmapsUrl = buildGoogleMapsUrl();
-    const doraUrl  = !avoidTolls ? buildDoraplaUrl(entryRaw, exitRaw, vehicleType) : null;
-    const verifyHtml = (gmapsUrl || doraUrl)
+    const dora = !avoidTolls ? buildDoraplaUrl(entryRaw, exitRaw, entryIC, exitIC, vehicleType) : null;
+    const doraText = dora?.direct ? '💴 ドラぷら料金' : '💴 ドラぷら（手動入力）';
+    const verifyHtml = (gmapsUrl || dora)
       ? `<div class="verify-row" onclick="event.stopPropagation()">
            ${icLabel ? `<span class="ic-label">📍 ${icLabel}</span>` : ''}
            <div class="verify-links">
              ${gmapsUrl ? `<a class="verify-link" href="${gmapsUrl}" target="_blank" rel="noopener">🗺️ Googleマップ</a>` : ''}
-             ${doraUrl ? `<a class="verify-link" href="${doraUrl}" target="_blank" rel="noopener">💴 ドラぷら料金</a>` : ''}
+             ${dora ? `<a class="verify-link" href="${dora.url}" target="_blank" rel="noopener">${doraText}</a>` : ''}
            </div>
          </div>`
       : '';
