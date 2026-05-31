@@ -525,8 +525,6 @@ function isLikelyHighwayRamp(name) {
 function findRampNameAt(coord, isEntry) {
   const ps = getPlacesService();
   if (!ps || !coord) return Promise.resolve(null);
-  const label = isEntry ? 'ENTRY' : 'EXIT';
-  console.log(`[IC-debug] ${label} maneuver coord:`, coord, `→ https://www.google.com/maps?q=${coord.lat},${coord.lng}`);
   const tryKeyword = (kw) => new Promise(resolve => {
     ps.nearbySearch({
       location: coord,
@@ -534,11 +532,8 @@ function findRampNameAt(coord, isEntry) {
       keyword: kw,
     }, (results, status) => {
       if (status !== google.maps.places.PlacesServiceStatus.OK || !results) {
-        console.log(`[IC-debug] ${label} kw="${kw}" → status=${status}, no results`);
         return resolve(null);
       }
-      const top = results.slice(0, 5).map(r => ({ name: r.name, accept: isLikelyHighwayRamp(r.name) }));
-      console.log(`[IC-debug] ${label} kw="${kw}" top5:`, top);
       for (const r of results) {
         if (isLikelyHighwayRamp(r.name)) {
           const parsed = parseRampName(r.name);

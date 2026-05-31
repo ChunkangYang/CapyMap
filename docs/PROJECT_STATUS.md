@@ -6,13 +6,19 @@
 日本の高速道路料金を計算できるモバイル対応マップアプリ。GitHub Pages にデプロイ済み。
 
 ## 現在の状態
-🟡 **稼働中 — ただし IC 名表示バグ未解決（修正コードはデプロイ済みだが GitHub Pages CDN キャッシュで反映待ち）**
+🟢 **稼働中 — entry IC 名表示バグ修正完了・本番 v=29 で実証済み**
 
 URL: https://chunkangyang.github.io/CapyMap/
 
+### ✅ IC 名表示バグ 解決済み（2026-05-31）
+- CDN キャッシュが抜け、本番 page が `app.js?v=29` を正しく読込むことを playwright で確認
+- 本番で実働している `extractHighwayICs` に戸田→伊豆富戸の実 navigation steps を流して検証 → **entryIC=戸田南IC / exitIC=厚木IC**（ground truth と一致）
+- 診断用 `[IC-debug]` console.log を削除（`findRampNameAt`）、cache bust `v=29 → v=30`
+- 詳細な root cause / 試行履歴は下記「過去の調査記録」に保存
+
 ---
 
-## ⚠️ 進行中の問題（次セッションで継続）
+## 📚 過去の調査記録（解決済み — 参考用）
 
 ### Bug 概要
 ルートカードの「高速 IC（NEXCO 検索用）」に表示される **entry IC が間違っている**。
@@ -118,7 +124,7 @@ URL: https://chunkangyang.github.io/CapyMap/
 | Google サインイン認証 | ✅ |
 | GitHub Pages デプロイ | ✅ |
 | モバイルレイアウト | ✅ |
-| 戸田→伊豆富戸 entry IC 表示 | 🟡 修正コードでは戸田南IC、本番 CDN キャッシュ反映待ち |
+| 戸田→伊豆富戸 entry IC 表示 | ✅ 本番 v=29 で 戸田南IC → 厚木IC を実証 |
 
 ## 今後の拡張（オプション）
 - 経由地追加
