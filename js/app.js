@@ -558,22 +558,68 @@ function isCleanICName(name) {
   return /(IC|ランプ|本線料金所)$/.test(name || '');
 }
 
+// ── IC 座標表（OSM motorway_junction）─────────────────────────
+// js/ic-coords.json = [[name, lat, lon], ...]（全日本 6849 IC/JCT, ODbL）。
+// Google の instruction text は entry/exit の IC 専名を省略しがち、Places 反查も
+// NEXCO IC では店舗/バス停を返して使い物にならない。そこで maneuver 座標から最寄り
+// IC を引いて実名を得る（戸田南・小田原西IC 等を実測で検証済み）。
+let _icCoordsPromise = null;
+function loadICCoords() {
+  if (!_icCoordsPromise) {
+    _icCoordsPromise = fetch('js/ic-coords.json')
+      .then(r => (r.ok ? r.json() : []))
+      .catch(() => []);
+  }
+  return _icCoordsPromise;
+}
+
+// Nearest IC name to a {lat,lng} coord. Equirectangular approx (Japan: 1°lon≈91km).
+// Returns null if the nearest IC is farther than maxMeters (avoids labelling a point
+// that isn't actually at a highway IC).
+function nearestICName(coords, coord, maxMeters = 2500) {
+  if (!coord) return null;
+  const la = coord.lat, lo = coord.lng;
+  let best = null, bestSq = Infinity;
+  for (let k = 0; k < coords.length; k++) {
+    const dla = (coords[k][1] - la) * 111000;
+    const dlo = (coords[k][2] - lo) * 91000;
+    const sq = dla * dla + dlo * dlo;
+    if (sq < bestSq) { bestSq = sq; best = coords[k][0]; }
+  }
+  return best != null && Math.sqrt(bestSq) <= maxMeters ? best : null;
+}
+
+// Toll roads ドラぷら(NEXCO 料金検索) does NOT price — 民間 / 一部公社。If a route
+// uses any of these, the Google total includes money the NEXCO query can't reproduce,
+// so we surface a note. 首都高/阪神高 are NOT here (ドラぷら covers them).
+const NON_NEXCO_TOLL_ROADS = [
+  '真鶴道路', '熱海ビーチライン', '伊豆スカイライン', '箱根ターンパイク',
+  'アネスト岩田ターンパイク', '芦ノ湖スカイライン', '西伊豆スカイライン',
+  '嬬恋パノラマライン', '日光宇都宮道路', '比叡山ドライブウェイ',
+];
+function detectNonNexcoTolls(route) {
+  const steps = route.legs?.[0]?.steps || [];
+  const found = new Set();
+  for (const s of steps) {
+    // Drop "(…の表示)" sign-list blocks — they name roads shown on signage that the
+    // route does not necessarily take (e.g. 伊豆スカイライン appears on a sign but the
+    // route never drives it). Only road names in the actual travel text count.
+    const t = (s.navigationInstruction?.instructions || '').replace(/[（(][^）)]*?の表示[）)]/g, '');
+    for (const nm of NON_NEXCO_TOLL_ROADS) if (t.includes(nm)) found.add(nm);
+  }
+  return [...found];
+}
+
 async function enrichRouteICs(route) {
-  const ics = extractHighwayICs(route);
-  if (!isCleanICName(ics.entryIC)) {
-    const ec = getEntryCoord(route);
-    if (ec) {
-      const found = await findRampNameAt(ec, true);
-      if (found) { ics.entryIC = found.name; ics.entryRaw = found.raw; }
-    }
+  const ics = extractHighwayICs(route); // text-based fallback (used only if座標引きが空振り)
+  const coords = await loadICCoords();
+  if (coords.length) {
+    const en = nearestICName(coords, getEntryCoord(route));
+    const xn = nearestICName(coords, getExitCoord(route));
+    if (en) { ics.entryIC = en; ics.entryRaw = en.replace(/(IC|JCT|ランプ|本線料金所)$/, ''); }
+    if (xn) { ics.exitIC = xn; ics.exitRaw = xn.replace(/(IC|JCT|ランプ|本線料金所)$/, ''); }
   }
-  if (!isCleanICName(ics.exitIC)) {
-    const xc = getExitCoord(route);
-    if (xc) {
-      const found = await findRampNameAt(xc, false);
-      if (found) { ics.exitIC = found.name; ics.exitRaw = found.raw; }
-    }
-  }
+  ics.extraTolls = detectNonNexcoTolls(route);
   route._ics = ics;
   return ics;
 }
@@ -620,9 +666,12 @@ function renderRouteCards(routes, avoidTolls, hasEtc, vehicleType) {
 
     // IC extraction: shown prominently so the user can manually verify Google's toll
     // estimate by typing these IC names into NEXCO ドラぷら search.
-    const { entryIC, exitIC } = route._ics || extractHighwayICs(route);
+    const { entryIC, exitIC, extraTolls } = route._ics || extractHighwayICs(route);
     const hasIC = entryIC || exitIC;
     const gmapsUrl = buildGoogleMapsUrl();
+    const extraNote = (!avoidTolls && extraTolls && extraTolls.length)
+      ? `<div class="ic-note">⚠️ 料金には NEXCO 以外の有料道路（${extraTolls.join('・')}）が含まれます</div>`
+      : '';
     const icBlock = !avoidTolls && hasIC
       ? `<div class="ic-block">
            <div class="ic-block-label">高速 IC（NEXCO 検索用）</div>
@@ -631,6 +680,7 @@ function renderRouteCards(routes, avoidTolls, hasEtc, vehicleType) {
              <span class="ic-arrow">→</span>
              <span class="ic-name">${exitIC || '?'}</span>
            </div>
+           ${extraNote}
          </div>`
       : '';
     const verifyHtml = (gmapsUrl || icBlock)

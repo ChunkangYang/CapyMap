@@ -10,6 +10,13 @@
 
 URL: https://chunkangyang.github.io/CapyMap/
 
+### ✅ entry/exit IC を OSM nearest-junction で実名化（2026-05-31）
+- 根因: Google は IC 専名を省略・Places 反查は店舗を返す → 旧ロジックが **JCT 名**（大泉JCT/海老名JCT）を起訖に拾い ドラぷら 査定不能。
+- 修正: OSM `highway=motorway_junction`（全日本 6849 件）を `js/ic-coords.json` に bundle、maneuver 座標から最寄り IC を実名化（`nearestICName`、Places 反查を置換）。
+- 非NEXCO有料道路（真鶴道路・熱海ビーチライン 等）検出 → カードに注記。
+- 検証（戸田→伊豆富戸 3 ルート, `docs/EVIDENCES/IC-nearest-junction-fix.md`）: 全ルートで JCT 消滅・実 IC 化（route1/3=戸田南→小田原西IC, route2=大泉IC→小田原西IC）。
+- cache bust `v=30 → v=31`。
+
 ### ✅ IC 名表示バグ 解決済み（2026-05-31）
 - CDN キャッシュが抜け、本番 page が `app.js?v=29` を正しく読込むことを playwright で確認
 - 本番で実働している `extractHighwayICs` に戸田→伊豆富戸の実 navigation steps を流して検証 → **entryIC=戸田南IC / exitIC=厚木IC**（ground truth と一致）

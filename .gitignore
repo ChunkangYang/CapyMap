@@ -9,3 +9,11 @@ Thumbs.db
 
 # Local config (do not commit real API keys)
 config.local.js
+
+# Playwright / ad-hoc debug artifacts
+.playwright-mcp/
+route-steps.json
+routes-full.json
+ic-coords-raw.json
+overpass_test.json
+test_ic_logic.js
